@@ -8,13 +8,16 @@ venv/
 .env.*
 
 # Data & secrets
-data/
+/data/
 *.csv
 *.parquet
 *.h5
 *.db
 *.sqlite
 configs/secrets.yaml
+
+# Tracked exceptions (seed / schema files)
+!configs/*.csv
 
 # Notebooks
 .ipynb_checkpoints/
