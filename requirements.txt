@@ -1,27 +1,33 @@
-# 数据处理
+# === 数据接入（Phase 1）===
+akshare>=1.12          # 核心开源数据源
+requests>=2.31         # CFFEX 公告爬取
+beautifulsoup4>=4.12   # HTML 解析
+lxml>=4.9              # XML/HTML 解析后端
+pdfplumber>=0.10       # CFFEX 历史 PDF 公告解析（按需）
+
+# === 数据处理 ===
 pandas>=2.0
 numpy>=1.24
-pyarrow>=14.0
+pyarrow>=14.0          # Parquet 时序存储
 
-# 金融计算
-QuantLib>=1.32
-scipy>=1.11
+# === 金融计算（Phase 2）===
+QuantLib>=1.32         # 债券定价、DV01、凸性
+scipy>=1.11            # 优化、插值
 
-# 配置与日志
+# === 配置与日志 ===
 pyyaml>=6.0
 loguru>=0.7
 
-# 数据库 / 缓存（Phase 1+ 启用）
-# sqlalchemy>=2.0
-# psycopg2-binary>=2.9
-# clickhouse-driver>=0.2
-# redis>=5.0
+# === 监控面板（Phase 4）===
+streamlit>=1.32        # 日频面板首选
+plotly>=5.18           # 交互式图表
 
-# Web / API（Phase 4+ 启用）
-# fastapi>=0.110
-# uvicorn>=0.27
-# websockets>=12.0
-
-# 测试
+# === 测试 ===
 pytest>=8.0
 pytest-cov>=4.1
+
+# === 任务调度（按需）===
+# schedule>=1.2        # 简单的 Python 定时任务（cron 替代品）
+
+# === 告警（Phase 5，按需启用）===
+# requests-toolbelt>=1.0  # 钉钉 / 企微 webhook
