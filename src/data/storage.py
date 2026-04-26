@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS contracts (
 );
 
 -- CF table is append-only. (contract_id, bond_code) is permanent once written.
+-- No FK to contracts(contract_id) on purpose: CF announcements often arrive
+-- before contract metadata is registered. Use a separate audit if needed.
 CREATE TABLE IF NOT EXISTS conversion_factors (
     contract_id   TEXT NOT NULL,
     bond_code     TEXT NOT NULL,
@@ -97,8 +99,7 @@ CREATE TABLE IF NOT EXISTS conversion_factors (
     announce_date TEXT,
     source_url    TEXT,
     created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (contract_id, bond_code),
-    FOREIGN KEY (contract_id) REFERENCES contracts(contract_id)
+    PRIMARY KEY (contract_id, bond_code)
 );
 
 CREATE TABLE IF NOT EXISTS signals (
