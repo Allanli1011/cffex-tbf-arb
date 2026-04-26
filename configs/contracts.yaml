@@ -1,0 +1,58 @@
+# 中金所国债期货合约元数据
+# 单位说明：face_value 单位为元；min_tick 单位为元/百元面值
+
+products:
+  TS:
+    name: 2年期国债期货
+    underlying_tenor_years: 2
+    deliverable_remaining_years: [1.5, 2.25]
+    coupon_rate_notional: 0.03
+    face_value: 2000000
+    min_tick: 0.005
+    multiplier: 20000  # face_value × min_tick / 100
+    margin_pct: 0.005
+
+  TF:
+    name: 5年期国债期货
+    underlying_tenor_years: 5
+    deliverable_remaining_years: [4.0, 5.25]
+    coupon_rate_notional: 0.03
+    face_value: 1000000
+    min_tick: 0.005
+    multiplier: 10000
+    margin_pct: 0.012
+
+  T:
+    name: 10年期国债期货
+    underlying_tenor_years: 10
+    deliverable_remaining_years: [6.5, 10.25]
+    coupon_rate_notional: 0.03
+    face_value: 1000000
+    min_tick: 0.005
+    multiplier: 10000
+    margin_pct: 0.02
+
+  TL:
+    name: 30年期国债期货
+    underlying_tenor_years: 30
+    deliverable_remaining_years: [25.0, 30.0]  # 名义标的，待核实当前规则
+    coupon_rate_notional: 0.03
+    face_value: 1000000
+    min_tick: 0.01
+    multiplier: 10000
+    margin_pct: 0.035
+
+# 信号阈值（可在策略层覆盖）
+thresholds:
+  basis:
+    irr_minus_repo_long_bp: 30      # 大于此值开正套
+    irr_minus_repo_short_bp: -20    # 小于此值开反套
+    net_basis_pct_high: 0.90
+    net_basis_pct_low: 0.10
+  calendar_spread:
+    z_entry: 2.0
+    z_exit: 0.5
+    min_days_to_delivery: 20
+  curve:
+    butterfly_z_entry: 2.0
+    futures_cash_divergence_bp: 10

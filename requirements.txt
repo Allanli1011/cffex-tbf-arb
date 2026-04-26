@@ -1,0 +1,27 @@
+# 数据处理
+pandas>=2.0
+numpy>=1.24
+pyarrow>=14.0
+
+# 金融计算
+QuantLib>=1.32
+scipy>=1.11
+
+# 配置与日志
+pyyaml>=6.0
+loguru>=0.7
+
+# 数据库 / 缓存（Phase 1+ 启用）
+# sqlalchemy>=2.0
+# psycopg2-binary>=2.9
+# clickhouse-driver>=0.2
+# redis>=5.0
+
+# Web / API（Phase 4+ 启用）
+# fastapi>=0.110
+# uvicorn>=0.27
+# websockets>=12.0
+
+# 测试
+pytest>=8.0
+pytest-cov>=4.1
