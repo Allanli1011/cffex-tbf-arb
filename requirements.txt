@@ -1,3 +1,7 @@
+# 本项目直接使用系统 Python，不创建 venv。
+# 此文件仅作依赖清单参考。安装方式：pip3 install -r requirements.txt
+# 大多数依赖在本机已存在；缺失时再单独 pip3 install 即可。
+
 # === 数据接入（Phase 1）===
 akshare>=1.12          # 核心开源数据源
 requests>=2.31         # CFFEX 公告爬取

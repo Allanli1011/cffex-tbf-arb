@@ -12,10 +12,12 @@
 - [x] 撰写 design.md / strategies.md / roadmap.md
 - [x] 初始化 configs（合约元数据、阈值参数）
 - [x] 加 .gitignore、首个 commit
-- [ ] 准备 Python 环境（venv + requirements.txt 安装验证）
-- [ ] 添加 pyproject.toml（可选，规范化打包）
+- [x] **Python 环境策略**：直接使用系统 Python（`/usr/bin/python3`，3.9.6），不创建 venv。本地已装好 akshare / pandas / numpy / pyarrow / streamlit / plotly / loguru / pyyaml / scipy / pytest 等核心依赖
+- [ ] 仅 Phase 2 启动前补装 QuantLib（`pip3 install QuantLib`）
 
 **交付物**：可被新人 clone 后理解整体目标的代码库骨架。
+
+> **环境约定**：本项目不使用 venv / conda。所有 `pip install` 操作直接装在系统 Python 上。`requirements.txt` 仅作清单参考，不强制运行。
 
 ## Phase 1 — 数据层（开源免费）
 

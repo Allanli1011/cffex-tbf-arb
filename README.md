@@ -25,6 +25,18 @@ cffex_tbf_arb/
 - [docs/strategies.md](docs/strategies.md) — 套利策略详解与公式
 - [docs/roadmap.md](docs/roadmap.md) — 分阶段开发计划
 
+## 运行环境
+
+直接使用系统 Python 3（`/usr/bin/python3`），不创建 venv。`requirements.txt` 仅作依赖清单参考。
+
+```bash
+# 验证关键依赖
+python3 -c "import akshare, pandas, numpy, streamlit; print('ok')"
+
+# Phase 2 启动前补装
+pip3 install QuantLib
+```
+
 ## 开发阶段
 
 见 `docs/roadmap.md`。当前处于 **Phase 0 — 文档与脚手架**。
