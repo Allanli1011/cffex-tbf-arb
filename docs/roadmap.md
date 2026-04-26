@@ -24,19 +24,23 @@
 **目标**：基于 AKShare + CFFEX 直爬，建立稳定的日频数据 ETL。
 
 ### 1.1 基础设施
-- [ ] 数据存储设计：SQLite（结构化）+ Parquet（时序）目录布局
-- [ ] 通用 ETL 框架：`src/data/base.py`（抽象 fetcher / saver / 校验器）
-- [ ] 日志与错误处理（loguru + 统一 retry 装饰器）
-- [ ] 交易日历模块（`akshare.tool_trade_date_hist_sina`）
+- [x] 数据存储设计：SQLite（结构化）+ Parquet（时序）目录布局
+- [x] 通用 ETL 框架：`src/data/base.py`（抽象 fetcher / saver / 校验器）
+- [x] 日志与错误处理（loguru + 统一 retry 装饰器）
+- [x] 交易日历模块（`akshare.tool_trade_date_hist_sina`）
 
 ### 1.2 合约与基础信息
-- [ ] 合约元数据表（contract_id, product, listing_date, last_trade_date）
-- [ ] **CF 表 append-only 维护**
-  - [ ] `scripts/refresh_cf.py`：爬中金所公告页，解析挂牌通知
-  - [ ] 冲突检测：已存在的 (合约, 券) 对若新值不同则报错而非覆盖
-  - [ ] 季度自动运行（cron）+ 公告增量手动触发模式
-  - [ ] 首次全量回填当前在挂合约的 CF 表
-- [ ] 可交割券池维护（与 CF 同步更新）
+- [x] 合约元数据表：12 个在挂合约（TS/TF/T/TL × 2606/2609/2612）已入库
+- [x] **CF 表 append-only 维护**
+  - [x] 发现 CFFEX 公开 CSV API：`/sj/jgsj/jgqsj/index_6882.csv`（含所有在挂合约的完整 CF 数据）
+  - [x] `src/data/fetchers.py`：`CFFEXDeliverableBondFetcher` 直接拉取全量 CF
+  - [x] `scripts/populate_contracts.py`：一键全量同步（合约 + CF），支持 `--dry-run` 和 `--export-csv`
+  - [x] `scripts/refresh_cf.py`：爬中金所公告页解析增量通知（作为补充）
+  - [x] 冲突检测：已存在的 (合约, 券) 对若新值不同则报错而非覆盖
+  - [x] 幂等性验证通过：重复运行 `inserted=0, unchanged=123`
+  - [x] 首次全量回填完成：**12 个合约，123 条 CF 记录**
+  - [ ] 季度自动运行（cron）配置（代码已就绪，cron 待设）
+- [x] 可交割券池维护：与 CF 表同源，`CFFEXDeliverableBondFetcher` 一次拉取所有可交割券信息
 
 ### 1.3 行情数据
 - [ ] 期货日线接入（`akshare.futures_zh_daily_sina`，覆盖 TS/TF/T/TL 全部活跃合约）
