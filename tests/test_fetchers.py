@@ -109,3 +109,45 @@ def test_fetch_deliverable_pool_live():
     assert {"TS", "TF", "T", "TL"}.issubset(products)
     # Every snapshot must have a usable CF
     assert all(0.5 <= s.cf_row.cf <= 1.5 for s in snaps)
+
+
+# ---- CSV snapshot archival ----------------------------------------------
+
+
+def test_snapshot_writes_then_skips(tmp_path, monkeypatch):
+    from src.data import fetchers
+
+    # Stub out the network call with a tiny CSV
+    body = (
+        "测试国债,260099,019999,102999,20300101,2.00,0.9500,T2606,T\n"
+    ).encode("utf-8")
+    monkeypatch.setattr(fetchers, "_download_deliverable_csv", lambda url=None: body)
+
+    snap = tmp_path / "2026-04-27.csv"
+    snaps = fetchers.fetch_deliverable_pool(snapshot_path=snap)
+    assert snap.exists()
+    assert snap.read_bytes() == body
+    assert len(snaps) == 1
+
+    # Tamper the snapshot — second call should NOT overwrite
+    snap.write_bytes(b"DO_NOT_OVERWRITE")
+    fetchers.fetch_deliverable_pool(snapshot_path=snap)
+    assert snap.read_bytes() == b"DO_NOT_OVERWRITE"
+
+
+# ---- Wayback parser tolerance -------------------------------------------
+
+
+def test_parse_skips_non_tbf_lines():
+    """Wayback / mirror snapshots may have HTML wrappers — parser must skip."""
+    raw = (
+        "<html><head><title>Wayback</title></head>\n"
+        "<body><div>archive toolbar</div>\n"
+        "测试国债,260099,019999,102999,20300101,2.00,0.9500,T2606,T\n"
+        "测试2,260100,019998,,20300201,1.50,0.9600,IF2606,IF\n"  # non-TBF, should drop
+        "</body></html>\n"
+    ).encode("utf-8")
+    from src.data.fetchers import parse_deliverable_csv
+    snaps = parse_deliverable_csv(raw)
+    assert len(snaps) == 1
+    assert snaps[0].contract_id == "T2606"

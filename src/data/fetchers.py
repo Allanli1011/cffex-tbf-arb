@@ -16,6 +16,7 @@ import datetime as dt
 import io
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -58,30 +59,48 @@ class DeliverablePoolSnapshot:
 
 
 @retry(max_attempts=3, initial_wait=2.0)
-def _download_deliverable_csv() -> bytes:
-    resp = requests.get(
-        CFFEX_DELIVERABLE_BOND_CSV,
-        headers=DEFAULT_HEADERS,
-        timeout=HTTP_TIMEOUT,
-    )
+def _download_deliverable_csv(url: str = CFFEX_DELIVERABLE_BOND_CSV,
+                              timeout: int = HTTP_TIMEOUT) -> bytes:
+    """Download the deliverable-bond CSV from CFFEX or any mirror.
+
+    Wayback Machine snapshots use the same URL prefixed with
+    ``https://web.archive.org/web/<timestamp>/``; the response body is the
+    original CSV so this function is mirror-agnostic.
+    """
+    resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=timeout)
     resp.raise_for_status()
     return resp.content
 
 
 def parse_deliverable_csv(raw: bytes, source_url: str = CFFEX_DELIVERABLE_BOND_CSV
                           ) -> list[DeliverablePoolSnapshot]:
-    """Parse the raw CFFEX CSV bytes into normalised snapshots."""
-    text = raw.decode("utf-8")
+    """Parse the CFFEX deliverable-bond CSV bytes into normalised snapshots.
+
+    Robust to Wayback Machine and similar mirrors: any line that does not
+    parse to a valid TBF ``contract_id`` (after stripping) is silently
+    skipped, so HTML wrappers / toolbars cause no harm.
+    """
+    text = raw.decode("utf-8", errors="replace")
+    # Pre-filter: keep only lines that have at least 8 commas (CSV body rows)
+    csv_lines = [ln for ln in text.splitlines() if ln.count(",") >= 8]
+    if not csv_lines:
+        return []
     df = pd.read_csv(
-        io.StringIO(text),
+        io.StringIO("\n".join(csv_lines)),
         header=None,
         names=CFFEX_CSV_COLUMNS,
         dtype=str,
         keep_default_na=False,
+        on_bad_lines="skip",
     )
 
     snapshots: list[DeliverablePoolSnapshot] = []
+    skipped = 0
     for r in df.itertuples(index=False):
+        contract_id = r.contract_id.strip()
+        if not CFFEX_CONTRACT_RE.match(contract_id):
+            skipped += 1
+            continue
         bond_code = r.interbank_code.strip()
         if not bond_code:
             logger.warning(f"Skipping row with empty interbank_code: {r}")
@@ -96,7 +115,7 @@ def parse_deliverable_csv(raw: bytes, source_url: str = CFFEX_DELIVERABLE_BOND_C
             maturity_date=_yyyymmdd_to_date(r.maturity_yyyymmdd),
         )
         cf_row = CFRow(
-            contract_id=r.contract_id.strip(),
+            contract_id=contract_id,
             bond_code=bond_code,
             bond_name=bond.bond_name,
             coupon_rate=bond.coupon_rate,
@@ -109,23 +128,44 @@ def parse_deliverable_csv(raw: bytes, source_url: str = CFFEX_DELIVERABLE_BOND_C
             DeliverablePoolSnapshot(
                 bond=bond,
                 cf_row=cf_row,
-                contract_id=r.contract_id.strip(),
+                contract_id=contract_id,
                 product=r.product.strip(),
             )
         )
+    if skipped:
+        logger.debug(f"Parser skipped {skipped} non-TBF rows from {source_url}")
     return snapshots
 
 
-def fetch_deliverable_pool() -> list[DeliverablePoolSnapshot]:
-    """Pull and parse the CFFEX deliverable-bond CSV.
+def fetch_deliverable_pool(url: str = CFFEX_DELIVERABLE_BOND_CSV,
+                           snapshot_path: Path | None = None,
+                           ) -> list[DeliverablePoolSnapshot]:
+    """Pull and parse a deliverable-bond CSV.
 
-    On a typical day this returns ~120 snapshots covering all currently
-    listed contracts.
+    Defaults to CFFEX live; pass an alternative URL (e.g. a Wayback Machine
+    archive) to load historical snapshots.
+
+    Parameters
+    ----------
+    url:
+        Source URL.
+    snapshot_path:
+        If given, the raw CSV bytes are written to this path before parsing.
+        The file is never overwritten — if it already exists the snapshot
+        step is skipped (existing archive wins).
     """
-    raw = _download_deliverable_csv()
-    snaps = parse_deliverable_csv(raw)
+    raw = _download_deliverable_csv(url)
+    if snapshot_path is not None:
+        snapshot_path = Path(snapshot_path)
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        if snapshot_path.exists():
+            logger.info(f"Snapshot already exists at {snapshot_path}; not overwriting")
+        else:
+            snapshot_path.write_bytes(raw)
+            logger.info(f"Snapshot archived to {snapshot_path} ({len(raw)} bytes)")
+    snaps = parse_deliverable_csv(raw, source_url=url)
     logger.info(
-        f"CFFEX CSV: {len(snaps)} (contract, bond) snapshots "
+        f"{url}: {len(snaps)} (contract, bond) snapshots "
         f"covering {len({s.contract_id for s in snaps})} contracts"
     )
     return snaps

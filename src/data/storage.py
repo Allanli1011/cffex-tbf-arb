@@ -38,6 +38,12 @@ PARQUET_DATASETS = {
     "futures_oi_rank": PARQUET_ROOT / "futures_oi_rank",
 }
 
+# Raw CSV archive — one file per day, never overwritten. Audit trail for
+# CFFEX deliverable-bond CSV; protects against silent endpoint changes and
+# captures bonds that will leave the live endpoint when their contracts
+# expire.
+CF_SNAPSHOT_DIR = DATA_ROOT / "cf_snapshots"
+
 
 def ensure_layout() -> None:
     """Create the standard data directory layout if missing."""

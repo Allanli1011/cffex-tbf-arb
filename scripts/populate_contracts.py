@@ -37,7 +37,11 @@ from src.data.fetchers import (  # noqa: E402
     fetch_deliverable_pool,
     parse_deliverable_csv,
 )
-from src.data.storage import init_schema, sqlite_conn  # noqa: E402
+from src.data.storage import (  # noqa: E402
+    CF_SNAPSHOT_DIR,
+    init_schema,
+    sqlite_conn,
+)
 from src.data.utils import configure_logger  # noqa: E402
 
 
@@ -91,8 +95,14 @@ def _apply(snapshots: list[DeliverablePoolSnapshot], dry_run: bool) -> int:
     return 0
 
 
-def cmd_live(dry_run: bool, export_path: Path | None) -> int:
-    snapshots = fetch_deliverable_pool()
+def cmd_live(dry_run: bool,
+             export_path: Path | None,
+             snapshot: bool) -> int:
+    snapshot_path = None
+    if snapshot:
+        import datetime as dt
+        snapshot_path = CF_SNAPSHOT_DIR / f"{dt.date.today().isoformat()}.csv"
+    snapshots = fetch_deliverable_pool(snapshot_path=snapshot_path)
     rc = _apply(snapshots, dry_run)
     if rc == 0 and export_path is not None:
         n = export_csv(export_path)
@@ -122,6 +132,14 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Read raw CFFEX CSV from local file instead of HTTP",
     )
+    parser.add_argument(
+        "--snapshot",
+        action="store_true",
+        help=(
+            "Archive raw CSV bytes to data/cf_snapshots/YYYY-MM-DD.csv "
+            "before parsing. Existing files are never overwritten."
+        ),
+    )
     args = parser.parse_args(argv)
 
     configure_logger()
@@ -129,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.from_csv is not None:
         return cmd_from_csv(args.from_csv, args.dry_run)
-    return cmd_live(args.dry_run, args.export_csv)
+    return cmd_live(args.dry_run, args.export_csv, args.snapshot)
 
 
 if __name__ == "__main__":
