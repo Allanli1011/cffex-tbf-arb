@@ -1,20 +1,20 @@
-"""Authoritative CFFEX data fetchers.
+"""Open-source data fetchers.
 
-The deliverable-bond CSV at ``/sj/jgsj/jgqsj/index_6882.csv`` is the cleanest
-machine-readable source on the CFFEX site. It carries, in 9 unlabelled
-columns:
+Two families:
 
-    bond_name | interbank_code | sh_code | sz_code |
-    maturity_date (YYYYMMDD) | coupon_rate (%) | cf | contract_id | product
+1. **CFFEX deliverable-bond CSV** (``/sj/jgsj/jgqsj/index_6882.csv``) —
+   the source of truth for bond master + CF + deliverable pool. One pull
+   covers everything for currently-listed contracts.
 
-It is updated on every trading day and contains the full deliverable-bond
-universe across all currently-listed contracts. This single endpoint
-replaces the bond-master + scraper combination we were originally building.
+2. **AKShare CFFEX daily / OI rank** — daily OHLCV+settle+OI per contract,
+   plus top-20 member long/short rankings. Backfillable from 2010-04-16.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import io
+import re
 from dataclasses import dataclass
 
 import pandas as pd
@@ -24,6 +24,9 @@ from loguru import logger
 from .bonds import Bond
 from .cf_table import CFRow
 from .utils import retry
+
+CFFEX_TBF_PRODUCTS = ("TS", "TF", "T", "TL")
+CFFEX_CONTRACT_RE = re.compile(r"^(?:TS|TF|TL|T)\d{4}$")
 
 CFFEX_DELIVERABLE_BOND_CSV = (
     "http://www.cffex.com.cn/sj/jgsj/jgqsj/index_6882.csv"
@@ -154,3 +157,190 @@ def _yyyymmdd_to_date(s: str) -> str | None:
     if len(s) != 8 or not s.isdigit():
         return None
     return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+
+
+# ============================================================================
+# CFFEX daily futures (OHLCV + settle + OI) via AKShare
+# ============================================================================
+
+
+CFFEX_DAILY_COLUMNS = [
+    "date",
+    "contract_id",
+    "product",
+    "open",
+    "high",
+    "low",
+    "close",
+    "settle",
+    "pre_settle",
+    "volume",
+    "open_interest",
+    "turnover",
+]
+
+
+@retry(max_attempts=3, initial_wait=2.0)
+def fetch_cffex_daily(date: str | dt.date) -> pd.DataFrame:
+    """Fetch CFFEX daily trading data for a single trading day.
+
+    Returns a tidy DataFrame restricted to TBF contracts only.
+
+    Parameters
+    ----------
+    date:
+        Trading day. Either ``YYYYMMDD`` string or ``datetime.date``.
+    """
+    import akshare as ak
+
+    if isinstance(date, dt.date):
+        date_str = date.strftime("%Y%m%d")
+    else:
+        date_str = str(date).replace("-", "")
+
+    raw = ak.get_cffex_daily(date=date_str)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=CFFEX_DAILY_COLUMNS)
+
+    df = raw[raw["symbol"].astype(str).str.match(CFFEX_CONTRACT_RE)].copy()
+    if df.empty:
+        return pd.DataFrame(columns=CFFEX_DAILY_COLUMNS)
+
+    df = df.rename(columns={"symbol": "contract_id", "variety": "product"})
+    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    df = df[CFFEX_DAILY_COLUMNS].reset_index(drop=True)
+
+    # Numeric coercion
+    for col in ("open", "high", "low", "close", "settle", "pre_settle",
+                "volume", "open_interest", "turnover"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
+# ============================================================================
+# CFFEX top-20 OI rank via AKShare
+# ============================================================================
+
+
+OI_RANK_COLUMNS = [
+    "date",
+    "contract_id",
+    "product",
+    "rank",
+    "vol_party_name",
+    "vol",
+    "vol_chg",
+    "long_party_name",
+    "long_open_interest",
+    "long_open_interest_chg",
+    "short_party_name",
+    "short_open_interest",
+    "short_open_interest_chg",
+]
+
+
+@retry(max_attempts=3, initial_wait=2.0)
+def fetch_cffex_oi_rank(date: str | dt.date) -> pd.DataFrame:
+    """Top-20 member volume / long-OI / short-OI rankings for TBF contracts.
+
+    AKShare returns ``dict[contract_id, DataFrame]``; we flatten to one tidy
+    long-format table.
+    """
+    import akshare as ak
+
+    if isinstance(date, dt.date):
+        date_str = date.strftime("%Y%m%d")
+    else:
+        date_str = str(date).replace("-", "")
+
+    data = ak.get_cffex_rank_table(
+        date=date_str, vars_list=list(CFFEX_TBF_PRODUCTS)
+    )
+    if not isinstance(data, dict) or not data:
+        return pd.DataFrame(columns=OI_RANK_COLUMNS)
+
+    parts = []
+    iso_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+    for contract_id, df in data.items():
+        if df is None or df.empty:
+            continue
+        if not CFFEX_CONTRACT_RE.match(str(contract_id)):
+            continue
+        d = df.copy()
+        d["date"] = iso_date
+        d["contract_id"] = contract_id
+        if "variety" in d.columns:
+            d = d.rename(columns={"variety": "product"})
+        else:
+            d["product"] = re.match(r"^(TS|TF|TL|T)", contract_id).group(1)
+        parts.append(d)
+
+    if not parts:
+        return pd.DataFrame(columns=OI_RANK_COLUMNS)
+
+    out = pd.concat(parts, ignore_index=True)
+    keep = [c for c in OI_RANK_COLUMNS if c in out.columns]
+    out = out[keep]
+    return out
+
+
+# ============================================================================
+# CCDC China Treasury yield curve via AKShare
+# ============================================================================
+
+
+# CCDC publishes many curve names; we filter to the sovereign curve.
+TREASURY_CURVE_NAME = "中债国债收益率曲线"
+
+YIELD_CURVE_TENORS_CN_TO_YEARS = {
+    "3月": 0.25,
+    "6月": 0.5,
+    "1年": 1.0,
+    "3年": 3.0,
+    "5年": 5.0,
+    "7年": 7.0,
+    "10年": 10.0,
+    "30年": 30.0,
+}
+
+YIELD_CURVE_COLUMNS = ["date", "curve", "tenor_years", "yield_pct"]
+
+
+@retry(max_attempts=3, initial_wait=2.0)
+def fetch_treasury_yield_curve(start: str, end: str) -> pd.DataFrame:
+    """Fetch CCDC China Treasury yield curve over a date range.
+
+    Returns a long-format frame with one row per (date, tenor).
+    Yields are quoted in percent (e.g. ``2.35`` means 2.35%).
+
+    AKShare requires ``end - start < 1 year``; we don't enforce that here
+    so callers can split larger ranges themselves.
+    """
+    import akshare as ak
+
+    start_str = str(start).replace("-", "")
+    end_str = str(end).replace("-", "")
+    raw = ak.bond_china_yield(start_date=start_str, end_date=end_str)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=YIELD_CURVE_COLUMNS)
+
+    # Keep only the sovereign curve, drop other AAA bank/note curves
+    sov = raw[raw["曲线名称"] == TREASURY_CURVE_NAME].copy()
+    if sov.empty:
+        logger.warning(
+            f"No rows for curve {TREASURY_CURVE_NAME!r} in {start_str}..{end_str}"
+        )
+        return pd.DataFrame(columns=YIELD_CURVE_COLUMNS)
+
+    # Wide -> long
+    rows = []
+    for _, r in sov.iterrows():
+        date = pd.to_datetime(r["日期"]).strftime("%Y-%m-%d")
+        for cn_tenor, years in YIELD_CURVE_TENORS_CN_TO_YEARS.items():
+            if cn_tenor not in r:
+                continue
+            v = r[cn_tenor]
+            if pd.isna(v):
+                continue
+            rows.append((date, "treasury", years, float(v)))
+    return pd.DataFrame(rows, columns=YIELD_CURVE_COLUMNS)
