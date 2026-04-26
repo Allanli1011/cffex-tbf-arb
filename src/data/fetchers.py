@@ -1,189 +1,156 @@
-"""Concrete data fetchers for Phase 1.
+"""Authoritative CFFEX data fetchers.
 
-Each fetcher pulls data from a free/open source and returns a DataFrame.
-Fetchers are paired with savers in the ETL orchestration layer.
+The deliverable-bond CSV at ``/sj/jgsj/jgqsj/index_6882.csv`` is the cleanest
+machine-readable source on the CFFEX site. It carries, in 9 unlabelled
+columns:
+
+    bond_name | interbank_code | sh_code | sz_code |
+    maturity_date (YYYYMMDD) | coupon_rate (%) | cf | contract_id | product
+
+It is updated on every trading day and contains the full deliverable-bond
+universe across all currently-listed contracts. This single endpoint
+replaces the bond-master + scraper combination we were originally building.
 """
 
 from __future__ import annotations
 
-import datetime as dt
-from io import BytesIO
+import io
+from dataclasses import dataclass
 
 import pandas as pd
 import requests
 from loguru import logger
 
-from .base import Fetcher
+from .bonds import Bond
+from .cf_table import CFRow
 from .utils import retry
 
-# ── Shared HTTP ──────────────────────────────────────────────────────
-
+CFFEX_DELIVERABLE_BOND_CSV = (
+    "http://www.cffex.com.cn/sj/jgsj/jgqsj/index_6882.csv"
+)
+HTTP_TIMEOUT = 20
 DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (cffex-tbf-arb research)"}
-HTTP_TIMEOUT = 15
+
+CFFEX_CSV_COLUMNS = [
+    "bond_name",
+    "interbank_code",
+    "sh_code",
+    "sz_code",
+    "maturity_yyyymmdd",
+    "coupon_pct",
+    "cf",
+    "contract_id",
+    "product",
+]
+
+
+@dataclass(frozen=True)
+class DeliverablePoolSnapshot:
+    """One row of the CFFEX CSV, normalised to project conventions."""
+
+    bond: Bond
+    cf_row: CFRow
+    contract_id: str
+    product: str  # TS / TF / T / TL
 
 
 @retry(max_attempts=3, initial_wait=2.0)
-def _http_get(url: str, *, encoding: str | None = None) -> bytes:
-    resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT)
+def _download_deliverable_csv() -> bytes:
+    resp = requests.get(
+        CFFEX_DELIVERABLE_BOND_CSV,
+        headers=DEFAULT_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
     resp.raise_for_status()
-    if encoding:
-        resp.encoding = encoding
     return resp.content
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Phase 1.2 — 合约与基础信息
-# ══════════════════════════════════════════════════════════════════════
+def parse_deliverable_csv(raw: bytes, source_url: str = CFFEX_DELIVERABLE_BOND_CSV
+                          ) -> list[DeliverablePoolSnapshot]:
+    """Parse the raw CFFEX CSV bytes into normalised snapshots."""
+    text = raw.decode("utf-8")
+    df = pd.read_csv(
+        io.StringIO(text),
+        header=None,
+        names=CFFEX_CSV_COLUMNS,
+        dtype=str,
+        keep_default_na=False,
+    )
+
+    snapshots: list[DeliverablePoolSnapshot] = []
+    for r in df.itertuples(index=False):
+        bond_code = r.interbank_code.strip()
+        if not bond_code:
+            logger.warning(f"Skipping row with empty interbank_code: {r}")
+            continue
+
+        bond = Bond(
+            bond_code=bond_code,
+            bond_name=r.bond_name.strip(),
+            sh_code=_clean(r.sh_code),
+            sz_code=_clean(r.sz_code),
+            coupon_rate=_pct_to_decimal(r.coupon_pct),
+            maturity_date=_yyyymmdd_to_date(r.maturity_yyyymmdd),
+        )
+        cf_row = CFRow(
+            contract_id=r.contract_id.strip(),
+            bond_code=bond_code,
+            bond_name=bond.bond_name,
+            coupon_rate=bond.coupon_rate,
+            maturity_date=bond.maturity_date,
+            cf=float(r.cf),
+            announce_date=None,
+            source_url=source_url,
+        )
+        snapshots.append(
+            DeliverablePoolSnapshot(
+                bond=bond,
+                cf_row=cf_row,
+                contract_id=r.contract_id.strip(),
+                product=r.product.strip(),
+            )
+        )
+    return snapshots
 
 
-class CFFEXDeliverableBondFetcher(Fetcher):
-    """Fetch all deliverable bonds + CF from CFFEX's public CSV API.
+def fetch_deliverable_pool() -> list[DeliverablePoolSnapshot]:
+    """Pull and parse the CFFEX deliverable-bond CSV.
 
-    Source: http://www.cffex.com.cn/sj/jgsj/jgqsj/index_6882.csv
-    This CSV has NO header row; columns are:
-        bond_name, bond_code_ib, bond_code_sse, bond_code_szse,
-        maturity_date, coupon_rate, cf, contract_id, product
+    On a typical day this returns ~120 snapshots covering all currently
+    listed contracts.
     """
-
-    name = "cffex_deliverable_bonds"
-    URL = "http://www.cffex.com.cn/sj/jgsj/jgqsj/index_6882.csv"
-    COLUMNS = [
-        "bond_name",
-        "bond_code_ib",
-        "bond_code_sse",
-        "bond_code_szse",
-        "maturity_date",
-        "coupon_rate",
-        "cf",
-        "contract_id",
-        "product",
-    ]
-
-    def fetch(self) -> pd.DataFrame:
-        content = _http_get(self.URL)
-        df = pd.read_csv(
-            BytesIO(content), encoding="utf-8", header=None, names=self.COLUMNS
-        )
-        # Strip whitespace from string columns
-        for col in ["bond_name", "bond_code_ib", "contract_id", "product"]:
-            df[col] = df[col].astype(str).str.strip()
-        # Normalise bond_code_sse/szse to strings (may have leading zeros)
-        for col in ["bond_code_sse", "bond_code_szse"]:
-            df[col] = df[col].astype(str).str.strip()
-        # Ensure numeric types
-        df["coupon_rate"] = pd.to_numeric(df["coupon_rate"], errors="coerce")
-        df["cf"] = pd.to_numeric(df["cf"], errors="coerce")
-        # Parse maturity_date from YYYYMMDD to YYYY-MM-DD
-        df["maturity_date"] = pd.to_datetime(
-            df["maturity_date"].astype(str), format="%Y%m%d", errors="coerce"
-        ).dt.strftime("%Y-%m-%d")
-        logger.info(
-            f"Fetched {len(df)} deliverable bond rows covering "
-            f"{df['contract_id'].nunique()} contracts"
-        )
-        return df
+    raw = _download_deliverable_csv()
+    snaps = parse_deliverable_csv(raw)
+    logger.info(
+        f"CFFEX CSV: {len(snaps)} (contract, bond) snapshots "
+        f"covering {len({s.contract_id for s in snaps})} contracts"
+    )
+    return snaps
 
 
-class CFFEXContractInfoFetcher(Fetcher):
-    """Derive contract metadata from the deliverable bond CSV + AKShare.
-
-    The contract list comes from the deliverable bond data (which lists
-    all currently-live contracts). Listing/last-trade dates come from
-    ``akshare.futures_comm_info`` when available.
-    """
-
-    name = "cffex_contract_info"
-
-    def fetch(self) -> pd.DataFrame:
-        # Step 1: Get contract list from deliverable bonds
-        bond_fetcher = CFFEXDeliverableBondFetcher()
-        bonds_df = bond_fetcher.fetch()
-        contracts = (
-            bonds_df[["contract_id", "product"]]
-            .drop_duplicates()
-            .sort_values("contract_id")
-            .reset_index(drop=True)
-        )
-
-        # Step 2: Try to enrich with listing/last-trade dates from AKShare
-        try:
-            import akshare as ak
-
-            comm_df = ak.futures_comm_info(symbol="中金所")
-            # Filter to treasury futures
-            mask = comm_df["合约代码"].str.strip().isin(contracts["contract_id"])
-            if mask.any():
-                extra = comm_df.loc[mask, ["合约代码"]].copy()
-                extra = extra.rename(columns={"合约代码": "contract_id"})
-                extra["contract_id"] = extra["contract_id"].str.strip()
-                contracts = contracts.merge(extra, on="contract_id", how="left")
-        except Exception as exc:
-            logger.warning(f"Could not enrich from futures_comm_info: {exc}")
-
-        # Step 3: Try to get listing/last-trade from futures_contract_info_cffex
-        try:
-            import akshare as ak
-
-            info_df = ak.futures_contract_info_cffex()
-            # Filter to our contracts
-            info_df["合约代码"] = info_df["合约代码"].str.strip()
-            mask = info_df["合约代码"].isin(contracts["contract_id"])
-            if mask.any():
-                extra = info_df.loc[mask, ["合约代码", "上市日", "最后交易日"]].copy()
-                extra = extra.rename(
-                    columns={
-                        "合约代码": "contract_id",
-                        "上市日": "listing_date",
-                        "最后交易日": "last_trade_date",
-                    }
-                )
-                contracts = contracts.merge(extra, on="contract_id", how="left")
-        except Exception as exc:
-            logger.warning(f"Could not enrich from futures_contract_info_cffex: {exc}")
-
-        # Ensure all columns exist
-        for col in ["listing_date", "last_trade_date"]:
-            if col not in contracts.columns:
-                contracts[col] = None
-
-        logger.info(f"Built contract info for {len(contracts)} contracts")
-        return contracts[["contract_id", "product", "listing_date", "last_trade_date"]]
+# ---- helpers -------------------------------------------------------------
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Phase 1.3 — 行情数据 (stubs, to be filled in later)
-# ══════════════════════════════════════════════════════════════════════
+def _clean(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
 
 
-class FuturesDailyFetcher(Fetcher):
-    """Fetch daily OHLCV for treasury futures from CFFEX via AKShare."""
+def _pct_to_decimal(s: str) -> float | None:
+    """CFFEX writes coupon as percent: '2.35' -> 0.0235."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        return float(s) / 100
+    except ValueError:
+        return None
 
-    name = "futures_daily"
 
-    def __init__(self, date: str | None = None) -> None:
-        """date: YYYYMMDD string. If None, uses latest trading day."""
-        self.date = date
-
-    def fetch(self) -> pd.DataFrame:
-        import akshare as ak
-
-        date_str = self.date
-        if date_str is None:
-            from .calendar import latest_trading_day
-
-            date_str = latest_trading_day().strftime("%Y%m%d")
-
-        df = ak.futures_hist_daily_cffex(date=date_str)
-        # Filter to treasury futures only
-        mask = df["variety"].isin(["TS", "TF", "T", "TL"])
-        df = df.loc[mask].copy()
-        # Standardise column names
-        df = df.rename(
-            columns={
-                "symbol": "contract_id",
-                "date": "trade_date",
-                "variety": "product",
-            }
-        )
-        logger.info(f"Fetched {len(df)} futures daily rows for {date_str}")
-        return df
+def _yyyymmdd_to_date(s: str) -> str | None:
+    s = (s or "").strip()
+    if len(s) != 8 or not s.isdigit():
+        return None
+    return f"{s[:4]}-{s[4:6]}-{s[6:]}"

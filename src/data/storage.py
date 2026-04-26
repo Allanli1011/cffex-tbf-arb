@@ -86,6 +86,19 @@ CREATE TABLE IF NOT EXISTS contracts (
     created_at       TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Bond master table. ``bond_code`` uses the interbank code as canonical PK.
+-- Coupon and maturity may be revised by an issuer (rare); we allow updates
+-- here, unlike the immutable conversion_factors table.
+CREATE TABLE IF NOT EXISTS bonds (
+    bond_code      TEXT PRIMARY KEY,         -- 银行间代码, e.g. 240017
+    bond_name      TEXT NOT NULL,            -- e.g. 2024年记账式附息（十七期）国债
+    sh_code        TEXT,                     -- 上交所代码
+    sz_code        TEXT,                     -- 深交所代码
+    coupon_rate    REAL,                     -- 票面利率（小数，0.0235 = 2.35%）
+    maturity_date  TEXT,                     -- YYYY-MM-DD
+    updated_at     TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- CF table is append-only. (contract_id, bond_code) is permanent once written.
 -- No FK to contracts(contract_id) on purpose: CF announcements often arrive
 -- before contract metadata is registered. Use a separate audit if needed.
