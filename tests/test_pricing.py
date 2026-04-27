@@ -430,6 +430,78 @@ def test_rolling_zscore():
     assert pd.isna(df["z10"].iloc[0])
 
 
+# ---- Futures implied yield + DV01 ---------------------------------------
+
+
+def test_implied_ytm_inverts_pricing():
+    """Implied yield should round-trip: price the bond, then implied_ytm
+    given F = clean / CF should recover the same yield."""
+    from src.pricing.bond_pricing import (
+        implied_ytm_from_futures,
+        price_from_yield,
+    )
+
+    target_y = 0.0176
+    pr = price_from_yield(0.0211, "2034-08-25", "2026-04-24", target_y)
+    cf = 0.9359
+    f = pr.clean / cf
+    implied = implied_ytm_from_futures(
+        futures_price=f,
+        cf=cf,
+        coupon_rate=0.0211,
+        maturity="2034-08-25",
+        valuation_date="2026-04-24",
+    )
+    assert implied == pytest.approx(target_y, abs=1e-6)
+
+
+def test_futures_dv01_t_contract_realistic():
+    """T (10Y) DV01 should land in 600-800 RMB/bp/contract for typical
+    near-money CTD."""
+    from src.pricing.bond_pricing import futures_dv01
+
+    out = futures_dv01(
+        futures_price=108.735,
+        cf=0.9928,
+        coupon_rate=0.0288,
+        maturity="2033-02-25",
+        valuation_date="2026-04-24",
+        product="T",
+    )
+    assert 500 < out.dv01_per_contract < 900
+    # Modified duration of a 6.8Y bond should be ~6-7 years
+    assert 5.0 < out.modified_duration < 7.5
+    # Sanity: dv01_per_100_face should equal per_contract / 10000 (face=1M)
+    assert out.dv01_per_contract == pytest.approx(
+        out.dv01_per_100_face * 10000, rel=1e-9
+    )
+
+
+def test_futures_dv01_unknown_product_raises():
+    from src.pricing.bond_pricing import futures_dv01
+    with pytest.raises(ValueError):
+        futures_dv01(
+            futures_price=100.0, cf=1.0, coupon_rate=0.02,
+            maturity="2030-01-01", valuation_date="2026-01-01",
+            product="XYZ",
+        )
+
+
+def test_futures_dv01_face_value_scaling():
+    """TS face=2M, T face=1M → for the same per-100-face DV01, contract
+    DV01 of TS should be 2x that of T."""
+    from src.pricing.bond_pricing import futures_dv01
+
+    common = dict(
+        futures_price=102.0, cf=0.95, coupon_rate=0.02,
+        maturity="2028-08-25", valuation_date="2026-04-24",
+    )
+    ts = futures_dv01(**common, product="TS")
+    t = futures_dv01(**common, product="T")
+    assert ts.dv01_per_100_face == pytest.approx(t.dv01_per_100_face)
+    assert ts.dv01_per_contract == pytest.approx(2 * t.dv01_per_contract, rel=1e-9)
+
+
 def test_irr_realistic_t2606_240017():
     """Pull a real (futures, CF, bond) tuple and check IRR is plausible."""
     from src.pricing.bond_pricing import price_from_yield

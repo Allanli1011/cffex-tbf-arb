@@ -42,7 +42,12 @@ from src.data.storage import (  # noqa: E402
     sqlite_conn,
 )
 from src.data.utils import configure_logger  # noqa: E402
-from src.pricing.bond_pricing import interpolate_yield, price_from_yield  # noqa: E402
+from src.pricing.bond_pricing import (  # noqa: E402
+    futures_dv01,
+    implied_ytm_from_futures,
+    interpolate_yield,
+    price_from_yield,
+)
 from src.pricing.cf_calculator import parse_contract_id  # noqa: E402
 from src.pricing.irr import compute_basis, irr_minus_repo_bp  # noqa: E402
 
@@ -133,18 +138,37 @@ def _compute_for_date(date: str) -> pd.DataFrame:
         ytm_pct = interpolate_yield(tenors, yields_pct, bond_tenor)
         ytm = ytm_pct / 100.0
 
+        product = (r.contract_id[:2] if r.contract_id[:2] in {"TS", "TF", "TL"}
+                   else r.contract_id[0])
         try:
             pricing = price_from_yield(
                 float(r.coupon_rate), maturity, valuation, ytm
             )
+            futures_settle = float(f_by_contract[r.contract_id])
             quote = compute_basis(
                 valuation_date=valuation,
                 delivery_date=delivery,
                 bond_clean=pricing.clean,
                 coupon_rate=float(r.coupon_rate),
                 maturity=maturity,
-                futures=float(f_by_contract[r.contract_id]),
+                futures=futures_settle,
                 cf=float(r.cf),
+            )
+            implied_ytm = implied_ytm_from_futures(
+                futures_price=futures_settle,
+                cf=float(r.cf),
+                coupon_rate=float(r.coupon_rate),
+                maturity=maturity,
+                valuation_date=valuation,
+            )
+            dv01 = futures_dv01(
+                futures_price=futures_settle,
+                cf=float(r.cf),
+                coupon_rate=float(r.coupon_rate),
+                maturity=maturity,
+                valuation_date=valuation,
+                product=product,
+                implied_ytm=implied_ytm,
             )
         except Exception:  # noqa: BLE001 - skip bad rows, keep going
             continue
@@ -152,17 +176,18 @@ def _compute_for_date(date: str) -> pd.DataFrame:
         rows.append({
             "date": date,
             "contract_id": r.contract_id,
-            "product": r.contract_id[:2] if r.contract_id[:2] in {"TS", "TF", "TL"}
-                       else r.contract_id[0],
+            "product": product,
             "bond_code": r.bond_code,
             "bond_name": r.bond_name,
             "coupon_rate": float(r.coupon_rate),
             "maturity_date": r.maturity_date,
             "cf": float(r.cf),
-            "futures_settle": float(f_by_contract[r.contract_id]),
+            "futures_settle": futures_settle,
             "ytm_used": ytm,
+            "implied_ytm": implied_ytm,
             "bond_clean": pricing.clean,
             "modified_duration": pricing.modified_dur,
+            "futures_dv01_per_contract": dv01.dv01_per_contract,
             "accrued_now": quote.accrued_now,
             "accrued_at_delivery": quote.accrued_at_delivery,
             "coupons_during": quote.coupons_during,

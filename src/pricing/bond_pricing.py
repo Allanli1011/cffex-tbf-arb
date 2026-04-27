@@ -145,6 +145,100 @@ def yield_from_price(
     raise RuntimeError("yield_from_price did not converge")
 
 
+# ---- Futures-implied yield and DV01 -------------------------------------
+
+
+# CFFEX TBF face values per contract (CNY)
+CFFEX_FACE_VALUE = {
+    "TS": 2_000_000,
+    "TF": 1_000_000,
+    "T": 1_000_000,
+    "TL": 1_000_000,
+}
+
+
+def implied_ytm_from_futures(
+    *,
+    futures_price: float,
+    cf: float,
+    coupon_rate: float,
+    maturity: str | dt.date,
+    valuation_date: str | dt.date,
+    face: float = 100.0,
+) -> float:
+    """Yield-to-maturity that would price the deliverable bond at exactly
+    ``futures_price * cf`` (per 100 face) on ``valuation_date``.
+
+    This is the standard CTD-implied futures yield: futures effectively
+    deliver a 'synthetic CTD bond' priced at ``F * CF``, so the implied
+    yield is whatever YTM equates the CTD's clean price to that level.
+    """
+    target_clean = futures_price * cf
+    return yield_from_price(
+        coupon_rate=coupon_rate,
+        maturity=maturity,
+        valuation_date=valuation_date,
+        clean_price=target_clean,
+        face=face,
+    )
+
+
+@dataclass(frozen=True)
+class FuturesDV01:
+    dv01_per_100_face: float    # RMB change for 1bp move, per 100 face
+    dv01_per_contract: float    # RMB change for 1bp move, one contract
+    modified_duration: float    # of the CTD bond, years
+    ctd_clean: float            # for sanity / display
+
+
+def futures_dv01(
+    *,
+    futures_price: float,
+    cf: float,
+    coupon_rate: float,
+    maturity: str | dt.date,
+    valuation_date: str | dt.date,
+    product: str,
+    implied_ytm: float | None = None,
+) -> FuturesDV01:
+    """DV01 of a TBF contract via the CTD bond.
+
+    A 1bp parallel yield shift moves the CTD's clean price by
+    ``-clean * modified_dur * 1bp``. The futures price approximately
+    follows ``ΔF ≈ ΔClean / CF``. Per-contract dollar DV01 then scales
+    by ``face_value / 100``.
+
+    If ``implied_ytm`` is omitted we solve for it from the futures price.
+    """
+    if product not in CFFEX_FACE_VALUE:
+        raise ValueError(
+            f"Unknown TBF product {product!r}; "
+            f"known: {sorted(CFFEX_FACE_VALUE)}"
+        )
+    if implied_ytm is None:
+        implied_ytm = implied_ytm_from_futures(
+            futures_price=futures_price,
+            cf=cf,
+            coupon_rate=coupon_rate,
+            maturity=maturity,
+            valuation_date=valuation_date,
+        )
+    pr = price_from_yield(coupon_rate, maturity, valuation_date, implied_ytm)
+    bp = 1e-4
+    # ΔClean (per 100 face) for +1bp = -clean * mod_dur * 1bp
+    d_clean = -pr.clean * pr.modified_dur * bp
+    d_futures_per_100 = d_clean / cf
+    dv01_per_100 = abs(d_futures_per_100)
+    face_value = CFFEX_FACE_VALUE[product]
+    dv01_per_contract = dv01_per_100 * face_value / 100.0
+    return FuturesDV01(
+        dv01_per_100_face=dv01_per_100,
+        dv01_per_contract=dv01_per_contract,
+        modified_duration=pr.modified_dur,
+        ctd_clean=pr.clean,
+    )
+
+
 def interpolate_yield(
     tenors: list[float],
     yields: list[float],
