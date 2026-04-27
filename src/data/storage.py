@@ -37,6 +37,7 @@ PARQUET_DATASETS = {
     "futures_oi_rank": PARQUET_ROOT / "futures_oi_rank",
     "basis_signals": PARQUET_ROOT / "basis_signals",    # per-(date,contract,bond) IRR
     "calendar_spreads": PARQUET_ROOT / "calendar_spreads",  # cross-quarter spreads + Z
+    "curve_signals": PARQUET_ROOT / "curve_signals",        # butterfly / steepener
 }
 
 # Raw CSV archive — one file per day, never overwritten. Audit trail for

@@ -1,6 +1,6 @@
 # Project Status
 
-> Last updated: 2026-04-27. Read this first when resuming work in a new
+> Last updated: 2026-04-28. Read this first when resuming work in a new
 > session — it captures everything needed to pick up without re-reading
 > the conversation history.
 
@@ -24,8 +24,8 @@ frequency. Use system Python 3.9.6 directly, no venv.
 | 2.3 — CTD 切换概率 | ⛔ todo |
 | 2.4 — 跨期价差 + Z-score | ✅ done; 3000 spread rows × 250 days |
 | 2.5 — 期货隐含 yield + DV01 | ✅ done; matches industry typical |
-| 2.6 — 蝶式 / 陡平 (DV01 中性) | ⛔ **next up** |
-| 3 — 回测框架 | ⛔ todo |
+| 2.6 — 蝶式 / 陡平 (DV01 中性) | ✅ done; 576 curve_signals × 144 days |
+| 3 — 回测框架 | ⛔ **next up** |
 | 4 — Streamlit MVP 面板 | ⛔ todo |
 | 5 — 完整面板 (8 模块) | ⛔ todo |
 | 6 — ML / regime / 流动性评分 / 压测 | ⛔ todo |
@@ -50,6 +50,7 @@ src/pricing/
   bond_pricing.py   — DCF 定价 / YTM 反求 / 久期 / 凸性 / **futures DV01**
   irr.py            — BasisQuote: gross/net basis, carry, IRR, vs repo bp
   spreads.py        — 跨期价差（near_mid / mid_far / near_far）+ rolling Z
+  curve_trades.py   — DV01 中性权重 / 50/50 蝶式 / fly_yield_bp + steepener_bp
 
 scripts/
   populate_contracts.py   — CFFEX 全量 CF（--snapshot 归档原始 CSV）
@@ -60,14 +61,15 @@ scripts/
   verify_cf_formula.py    — CF 公式 vs 944 行官方对比
   compute_basis_signals.py — 日终 IRR + DV01 + CTD 信号
   compute_calendar_spreads.py — 跨期价差 + Z-score
+  compute_curve_signals.py    — 蝶式 / 陡平 + 60d Z（DV01 中性比例）
 
 tests/
   test_infra.py / test_cf_table.py / test_fetchers.py /
   test_market_fetchers.py / test_audit.py / test_pricing.py
-  共 100/100 通过（offline）+ 6 联网用例
+  共 108/108 通过（offline）+ 7 联网用例
 ```
 
-## 数据库现状（2026-04-27）
+## 数据库现状（2026-04-28）
 
 | 表 / 数据集 | 行数 | 时间跨度 |
 |---|---|---|
@@ -78,8 +80,9 @@ tests/
 | `futures_oi_rank` parquet | 41730 | 同上 |
 | `bond_yield_curve` parquet | 2056 / 257 天 | 同上 |
 | `repo_rate` parquet | 3850 / 258 天 | 15 利率序列 |
-| `basis_signals` parquet | 11079 / 250 天 | IRR + DV01 |
+| `basis_signals` parquet | 11079 / 144 天 | IRR + DV01 |
 | `calendar_spreads` parquet | 3000 / 250 天 | Z-score 含 |
+| `curve_signals` parquet | 576 / 144 天 | 4 结构 × 144 天，含 60d Z |
 
 ## 关键设计决策（已确定，不要再讨论）
 
@@ -97,36 +100,30 @@ tests/
 - T2606 CTD = 230004，IRR=1.71%，vs FDR007=1.31% → +40bp 正向基差信号
 - T2609-T2612 价差 z60=-2.33（4% 分位） → 跨期信号
 - T 系列 DV01 ≈ 697 RMB/bp/合约；TL ≈ 1999；TF ≈ 466；TS ≈ 402
+- 2-5-10 fly = -0.34bp（z60=+1.56），belly 略贵
+- 5-10-30 fly = -44.6bp（z60=-0.54），belly (T) 偏贵但仍在区间
+- 2s10s 陡度 = 37.8bp（z60=-0.23），近中性
+- 5s30s 陡度 = 82.7bp（z60=-0.38），略平于均值
 
-## 下一步：Phase 2.6（蝶式 / 陡平价差）
+## 下一步：Phase 3（事件驱动回测框架）
 
-**输入**：已有 DV01 / 隐含 yield / futures_daily
-
-**新增模块**：
-- `src/pricing/curve_trades.py`
-  - `dv01_neutral_weights(dv01_a, dv01_b)` → 比例 N_b/N_a
-  - `butterfly_weights(dv01_short_wing, dv01_belly, dv01_long_wing)` → 三腿权重
-  - 支持 chain：`compute_butterfly(date, product_a, product_b, product_c)`
-- `scripts/compute_curve_signals.py`
-  - 蝶式：2-5-10 (TS+T-2×TF), 5-10-30 (TF+TL-2×T)
-  - 陡峭化 / 平坦化：2s10s, 5s30s
-  - 输出 spread + DV01 中性比例 + 60d Z
+**目标**：用现有 4 类信号（basis / calendar / fly / steepener）建一个简化
+的 backtester，按日订阅 parquet 信号、按规则下单 / 平仓、产出净值与
+夏普比、最大回撤等指标。
 
 **验收标准**：
-- 单元测试 ≥ 5 个
-- 全部 250 天历史数据跑完无错误
-- 结果落盘 `parquet/curve_signals/`
-- 给出最近一日的样例信号（z + 比例）
-
-**预计工时**：1 个 prompt 周期内可完成。
+- 单一信号 → 单一组合，规则可参数化（z 阈值 + 持有期）
+- 至少跑通 1 条 basis 策略 + 1 条 calendar 策略
+- 输出 trades + nav 曲线到 `parquet/backtest_runs/`
+- `backtest_runs` SQLite 表落参数 + 指标
 
 ## 后续 Phase 优先顺序（建议）
 
-1. **Phase 2.6** — 蝶式 / 陡平（45 分钟）
+1. **Phase 3** — 简单事件驱动回测（1 天）
 2. **Phase 2.3** — CTD 切换概率（蒙特卡洛或情景，1.5 小时）
-3. **Phase 4** 跳过完整面板，先做 **Streamlit MVP** 把现有 4 类信号可视化（半天）
-4. **Phase 3** 简单事件驱动回测（1 天）
-5. CCDC 现券估值接入（修 TL 偏差）
+3. **Phase 4** — Streamlit MVP，可视化 basis / calendar / fly / steepener
+4. CCDC 现券估值接入（修 TL 偏差）
+5. Phase 5/6 完整面板与 ML 信号
 
 ## 常用命令
 
@@ -136,6 +133,7 @@ python3 scripts/populate_contracts.py --snapshot
 python3 scripts/backfill_market_data.py
 python3 scripts/compute_basis_signals.py
 python3 scripts/compute_calendar_spreads.py
+python3 scripts/compute_curve_signals.py
 
 # 健康检查
 python3 scripts/data_audit.py -o docs/data_audit.md

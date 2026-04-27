@@ -522,3 +522,85 @@ def test_irr_realistic_t2606_240017():
     assert -0.05 < out.irr_annualised < 0.05
     assert out.gross_basis > -2.0  # bond clean shouldn't be wildly different
     assert out.gross_basis < 2.0
+
+
+# ---- curve_trades --------------------------------------------------------
+
+
+def test_dv01_neutral_weights_basic():
+    from src.pricing.curve_trades import dv01_neutral_weights
+
+    # Short DV01 = 400, long DV01 = 1600 → 4 short contracts per 1 long
+    w = dv01_neutral_weights(400.0, 1600.0)
+    assert w.n_short == 1.0
+    assert w.n_long == pytest.approx(0.25)
+    # $-DV01 should match
+    assert (w.n_short * w.dv01_short) == pytest.approx(w.n_long * w.dv01_long)
+
+
+def test_dv01_neutral_weights_scales_anchor():
+    from src.pricing.curve_trades import dv01_neutral_weights
+
+    w = dv01_neutral_weights(500.0, 2000.0, n_short=4.0)
+    assert w.n_short == 4.0
+    assert w.n_long == pytest.approx(1.0)
+
+
+def test_dv01_neutral_weights_invalid_raises():
+    from src.pricing.curve_trades import dv01_neutral_weights
+
+    with pytest.raises(ValueError):
+        dv01_neutral_weights(0.0, 1000.0)
+    with pytest.raises(ValueError):
+        dv01_neutral_weights(1000.0, -100.0)
+
+
+def test_butterfly_weights_50_50():
+    from src.pricing.curve_trades import butterfly_weights
+
+    # Belly DV01 = 1000 → each wing must contribute 500 of $-DV01
+    w = butterfly_weights(400.0, 1000.0, 2000.0)
+    # Each wing contributes belly/2 = 500 of $-DV01
+    assert (w.n_short_wing * w.dv01_short_wing) == pytest.approx(500.0)
+    assert (w.n_long_wing * w.dv01_long_wing) == pytest.approx(500.0)
+    # Wings together cancel the belly
+    wings = (w.n_short_wing * w.dv01_short_wing
+             + w.n_long_wing * w.dv01_long_wing)
+    belly = w.n_belly * w.dv01_belly
+    assert wings == pytest.approx(belly)
+
+
+def test_butterfly_weights_belly_scaling():
+    from src.pricing.curve_trades import butterfly_weights
+
+    w1 = butterfly_weights(400.0, 1000.0, 2000.0, n_belly=1.0)
+    w2 = butterfly_weights(400.0, 1000.0, 2000.0, n_belly=3.0)
+    assert w2.n_short_wing == pytest.approx(3.0 * w1.n_short_wing)
+    assert w2.n_long_wing == pytest.approx(3.0 * w1.n_long_wing)
+
+
+def test_butterfly_weights_invalid_raises():
+    from src.pricing.curve_trades import butterfly_weights
+
+    with pytest.raises(ValueError):
+        butterfly_weights(0.0, 1000.0, 2000.0)
+    with pytest.raises(ValueError):
+        butterfly_weights(400.0, 1000.0, 0.0)
+
+
+def test_fly_yield_bp_curvature():
+    from src.pricing.curve_trades import fly_yield_bp
+
+    # Linear curve (1.0%, 2.0%, 3.0%) has zero curvature
+    assert fly_yield_bp(1.0, 2.0, 3.0) == pytest.approx(0.0)
+    # Belly rich by 5bp (curve dips at belly): 2*1.95 - 1.0 - 3.0 = -0.10% = -10bp
+    assert fly_yield_bp(1.0, 1.95, 3.0) == pytest.approx(-10.0)
+
+
+def test_steepener_bp_basic():
+    from src.pricing.curve_trades import steepener_bp
+
+    # 10Y at 1.85%, 2Y at 1.20% → 65 bp slope
+    assert steepener_bp(1.20, 1.85) == pytest.approx(65.0)
+    # Inverted curve gives negative spread
+    assert steepener_bp(2.50, 2.00) == pytest.approx(-50.0)
