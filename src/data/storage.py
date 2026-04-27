@@ -35,6 +35,7 @@ PARQUET_DATASETS = {
     "bond_valuation": PARQUET_ROOT / "bond_valuation",  # populated in Phase 2
     "repo_rate": PARQUET_ROOT / "repo_rate",            # holds CFETS / GC / Shibor
     "futures_oi_rank": PARQUET_ROOT / "futures_oi_rank",
+    "basis_signals": PARQUET_ROOT / "basis_signals",    # per-(date,contract,bond) IRR
 }
 
 # Raw CSV archive — one file per day, never overwritten. Audit trail for
