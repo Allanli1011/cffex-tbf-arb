@@ -23,7 +23,10 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import sys
+import time
 from pathlib import Path
+
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -36,8 +39,12 @@ from src.data.calendar import (  # noqa: E402
     trading_days_between,
 )
 from src.data.fetchers import (  # noqa: E402
+    GC_SYMBOLS,
+    fetch_cfets_repo_fixings,
     fetch_cffex_daily,
     fetch_cffex_oi_rank,
+    fetch_exchange_repo,
+    fetch_shibor,
     fetch_treasury_yield_curve,
 )
 from src.data.storage import init_schema, parquet_dir  # noqa: E402
@@ -118,6 +125,75 @@ def _process_yield_curve(start: dt.date, end: dt.date, force: bool) -> int:
     return n_total
 
 
+def _process_funding_rates(start: dt.date, end: dt.date, force: bool) -> int:
+    """Pull all funding rates and save one parquet per date.
+
+    CFETS fixings are fetched per-month (API constraint stays loose but we
+    chunk to be safe). Shibor + GC are full-history single-call APIs that
+    we slice client-side.
+    """
+    parts: list = []
+
+    # CFETS by month chunks
+    cur = dt.date(start.year, start.month, 1)
+    while cur <= end:
+        # End of month
+        next_month = (cur.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+        chunk_end = min(next_month - dt.timedelta(days=1), end)
+        chunk_start = max(cur, start)
+        try:
+            df = fetch_cfets_repo_fixings(
+                chunk_start.isoformat(), chunk_end.isoformat()
+            )
+            if not df.empty:
+                parts.append(df)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"CFETS fixings {chunk_start}..{chunk_end} failed: {exc}")
+        cur = next_month
+
+    # Exchange repo (GC001/007/014). Eastmoney throttles back-to-back
+    # full-history pulls; sleep briefly between symbols to stay polite.
+    for i, sym in enumerate(GC_SYMBOLS):
+        if i > 0:
+            time.sleep(3.0)
+        try:
+            df = fetch_exchange_repo(symbol=sym)
+            df = df[(df["date"] >= start.isoformat())
+                    & (df["date"] <= end.isoformat())]
+            if not df.empty:
+                parts.append(df)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"exchange repo {sym} failed: {exc}")
+
+    # Shibor
+    try:
+        df = fetch_shibor()
+        df = df[(df["date"] >= start.isoformat())
+                & (df["date"] <= end.isoformat())]
+        if not df.empty:
+            parts.append(df)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"shibor failed: {exc}")
+
+    if not parts:
+        logger.warning("funding rates: no rows in range")
+        return 0
+
+    combined = pd.concat(parts, ignore_index=True)
+    n_total = 0
+    for d, sub in combined.groupby("date"):
+        n = _save_parquet(sub, "repo_rate", d, force)
+        if n != -1:
+            n_total += n
+    if n_total:
+        logger.info(
+            f"funding rates: {n_total} rows across "
+            f"{combined['date'].nunique()} days, "
+            f"{combined['rate_name'].nunique()} rate series"
+        )
+    return n_total
+
+
 def _resolve_dates(args) -> list[dt.date]:
     if args.date:
         d = dt.datetime.strptime(args.date, "%Y-%m-%d").date()
@@ -159,6 +235,10 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-yield-curve", action="store_true",
         help="Skip CCDC yield curve refresh (it covers the whole range in one call)",
     )
+    parser.add_argument(
+        "--skip-funding-rates", action="store_true",
+        help="Skip CFETS / GC / Shibor refresh",
+    )
     args = parser.parse_args(argv)
 
     configure_logger()
@@ -172,7 +252,12 @@ def main(argv: list[str] | None = None) -> int:
     logger.info(f"Processing {len(dates)} trading days: "
                 f"{dates[0]} .. {dates[-1]}")
 
-    totals = {"futures_daily": 0, "futures_oi_rank": 0, "bond_yield_curve": 0}
+    totals = {
+        "futures_daily": 0,
+        "futures_oi_rank": 0,
+        "bond_yield_curve": 0,
+        "repo_rate": 0,
+    }
     failures = 0
     for d in dates:
         try:
@@ -191,6 +276,16 @@ def main(argv: list[str] | None = None) -> int:
                 totals["bond_yield_curve"] = n
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"yield_curve unexpected failure: {exc}")
+            failures += 1
+
+    # Funding rates (CFETS fixings + GC + Shibor) fetched once per range
+    if not args.skip_funding_rates and len(dates) > 0:
+        try:
+            n = _process_funding_rates(dates[0], dates[-1], args.force)
+            if n > 0:
+                totals["repo_rate"] = n
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"funding_rates unexpected failure: {exc}")
             failures += 1
 
     logger.success(

@@ -384,3 +384,119 @@ def fetch_treasury_yield_curve(start: str, end: str) -> pd.DataFrame:
                 continue
             rows.append((date, "treasury", years, float(v)))
     return pd.DataFrame(rows, columns=YIELD_CURVE_COLUMNS)
+
+
+# ============================================================================
+# Funding rates
+# ============================================================================
+#
+# Three sources cover the rates we care about for IRR / financing-cost
+# calculations:
+#
+#   * CFETS daily fixings (R-series and DR-series) — published 11:30 each
+#     trading day. FR007 ≈ R007 weighted average; FDR007 ≈ DR007 weighted
+#     average for depository institutions only. We use these as the
+#     authoritative daily reference. AKShare: ``repo_rate_hist``.
+#   * Exchange pledged repo (GC001 / GC007 / GC014) — Shanghai exchange
+#     codes 204001 / 204007 / 204014. AKShare:
+#     ``bond_buy_back_hist_em(symbol=...)``.
+#   * Shibor — published by 全国银行间同业拆借中心. Full term structure
+#     O/N..1Y. AKShare: ``macro_china_shibor_all``.
+
+REPO_RATE_COLUMNS = ["date", "rate_name", "value_pct"]
+
+CFETS_FIXING_NAMES = ("FR001", "FR007", "FR014", "FDR001", "FDR007", "FDR014")
+
+
+@retry(max_attempts=3, initial_wait=2.0)
+def fetch_cfets_repo_fixings(start: str, end: str) -> pd.DataFrame:
+    """CFETS daily repo fixings (FR/FDR series) over a date range.
+
+    Returns long format: ``[date, rate_name, value_pct]``.
+    """
+    import akshare as ak
+
+    s = str(start).replace("-", "")
+    e = str(end).replace("-", "")
+    raw = ak.repo_rate_hist(start_date=s, end_date=e)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=REPO_RATE_COLUMNS)
+
+    df = raw.copy()
+    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    rate_cols = [c for c in CFETS_FIXING_NAMES if c in df.columns]
+    long = df.melt(
+        id_vars=["date"],
+        value_vars=rate_cols,
+        var_name="rate_name",
+        value_name="value_pct",
+    )
+    long = long.dropna(subset=["value_pct"]).reset_index(drop=True)
+    return long[REPO_RATE_COLUMNS]
+
+
+GC_SYMBOLS = {"GC001": "204001", "GC007": "204007", "GC014": "204014"}
+
+
+@retry(max_attempts=3, initial_wait=2.0)
+def fetch_exchange_repo(symbol: str = "GC007") -> pd.DataFrame:
+    """SSE pledged repo daily history for ``GC001`` / ``GC007`` / ``GC014``.
+
+    Returns long format ``[date, rate_name, value_pct]`` using the
+    closing rate as ``value_pct`` (consistent with CFETS fixings).
+    The full history (~5000 trading days back to 2006) is returned by
+    AKShare in a single call; callers can slice client-side.
+    """
+    import akshare as ak
+
+    if symbol not in GC_SYMBOLS:
+        raise ValueError(
+            f"Unknown SSE repo symbol {symbol!r}. Known: {sorted(GC_SYMBOLS)}"
+        )
+    raw = ak.bond_buy_back_hist_em(symbol=GC_SYMBOLS[symbol])
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=REPO_RATE_COLUMNS)
+
+    df = raw.copy()
+    df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
+    df["rate_name"] = symbol
+    df["value_pct"] = pd.to_numeric(df["收盘"], errors="coerce")
+    return df[REPO_RATE_COLUMNS].dropna().reset_index(drop=True)
+
+
+SHIBOR_TENOR_COLUMN_MAP = {
+    "O/N-定价": "Shibor_ON",
+    "1W-定价": "Shibor_1W",
+    "2W-定价": "Shibor_2W",
+    "1M-定价": "Shibor_1M",
+    "3M-定价": "Shibor_3M",
+    "6M-定价": "Shibor_6M",
+    "9M-定价": "Shibor_9M",
+    "1Y-定价": "Shibor_1Y",
+}
+
+
+@retry(max_attempts=3, initial_wait=2.0)
+def fetch_shibor() -> pd.DataFrame:
+    """Shibor full term structure (O/N..1Y), full history in one call.
+
+    Returns long format ``[date, rate_name, value_pct]``.
+    """
+    import akshare as ak
+
+    raw = ak.macro_china_shibor_all()
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=REPO_RATE_COLUMNS)
+
+    df = raw.copy()
+    df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
+    keep_cols = [c for c in SHIBOR_TENOR_COLUMN_MAP if c in df.columns]
+    df = df[["date"] + keep_cols].rename(columns=SHIBOR_TENOR_COLUMN_MAP)
+
+    long = df.melt(
+        id_vars=["date"], var_name="rate_name", value_name="value_pct"
+    )
+    long["value_pct"] = pd.to_numeric(long["value_pct"], errors="coerce")
+    return long.dropna(subset=["value_pct"]).reset_index(drop=True)[
+        REPO_RATE_COLUMNS
+    ]

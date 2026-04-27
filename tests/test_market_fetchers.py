@@ -155,3 +155,91 @@ def test_fetch_treasury_yield_curve_live():
     df = fetch_treasury_yield_curve("20260420", "20260424")
     assert len(df) > 0
     assert {1.0, 5.0, 10.0}.issubset(df["tenor_years"])
+
+
+# ---- Funding rates ------------------------------------------------------
+
+
+def test_fetch_cfets_repo_fixings_long_format():
+    from src.data.fetchers import fetch_cfets_repo_fixings, REPO_RATE_COLUMNS
+
+    fake = pd.DataFrame({
+        "date": ["2026-04-23", "2026-04-24"],
+        "FR001": [1.30, 1.30],
+        "FR007": [1.40, 1.38],
+        "FR014": [1.42, 1.40],
+        "FDR001": [1.22, 1.22],
+        "FDR007": [1.32, 1.31],
+        "FDR014": [1.35, 1.35],
+    })
+    with patch("akshare.repo_rate_hist", return_value=fake):
+        df = fetch_cfets_repo_fixings("20260423", "20260424")
+
+    # 2 dates × 6 fixings = 12 long-format rows
+    assert len(df) == 12
+    assert list(df.columns) == REPO_RATE_COLUMNS
+    assert set(df["rate_name"]) == {
+        "FR001", "FR007", "FR014", "FDR001", "FDR007", "FDR014"
+    }
+
+
+def test_fetch_exchange_repo_filters_columns():
+    from src.data.fetchers import fetch_exchange_repo
+
+    fake = pd.DataFrame({
+        "日期": ["2026-04-23", "2026-04-24"],
+        "开盘": [1.40, 1.40],
+        "收盘": [1.39, 1.38],
+        "最高": [1.43, 1.40],
+        "最低": [1.21, 1.36],
+        "成交量": [1000, 2000],
+        "成交额": [1e8, 2e8],
+    })
+    with patch("akshare.bond_buy_back_hist_em", return_value=fake):
+        df = fetch_exchange_repo(symbol="GC007")
+
+    assert len(df) == 2
+    assert (df["rate_name"] == "GC007").all()
+    assert df["value_pct"].iloc[0] == pytest.approx(1.39)
+
+
+def test_fetch_exchange_repo_unknown_symbol():
+    from src.data.fetchers import fetch_exchange_repo
+    with pytest.raises(ValueError):
+        fetch_exchange_repo(symbol="GC0099")
+
+
+def test_fetch_shibor_long_format():
+    from src.data.fetchers import fetch_shibor
+
+    fake = pd.DataFrame({
+        "日期": ["2026-04-23", "2026-04-24"],
+        "O/N-定价": [1.219, 1.219],
+        "O/N-涨跌幅": [0.0, 0.0],
+        "1W-定价": [1.329, 1.324],
+        "1W-涨跌幅": [0.2, -0.5],
+        "1Y-定价": [1.4825, 1.478],
+        "1Y-涨跌幅": [-0.4, -0.45],
+    })
+    with patch("akshare.macro_china_shibor_all", return_value=fake):
+        df = fetch_shibor()
+
+    assert {"Shibor_ON", "Shibor_1W", "Shibor_1Y"} == set(df["rate_name"])
+    assert df.dropna().shape[0] == 6
+
+
+@pytest.mark.network
+def test_fetch_funding_rates_live():
+    from src.data.fetchers import (
+        fetch_cfets_repo_fixings,
+        fetch_exchange_repo,
+        fetch_shibor,
+    )
+    cfets = fetch_cfets_repo_fixings("20260420", "20260424")
+    assert {"FR007", "FDR007"}.issubset(set(cfets["rate_name"]))
+
+    gc = fetch_exchange_repo("GC007")
+    assert len(gc) > 1000
+
+    shibor = fetch_shibor()
+    assert {"Shibor_ON", "Shibor_1W"}.issubset(set(shibor["rate_name"]))
