@@ -36,6 +36,7 @@ PARQUET_DATASETS = {
     "repo_rate": PARQUET_ROOT / "repo_rate",            # holds CFETS / GC / Shibor
     "futures_oi_rank": PARQUET_ROOT / "futures_oi_rank",
     "basis_signals": PARQUET_ROOT / "basis_signals",    # per-(date,contract,bond) IRR
+    "calendar_spreads": PARQUET_ROOT / "calendar_spreads",  # cross-quarter spreads + Z
 }
 
 # Raw CSV archive — one file per day, never overwritten. Audit trail for

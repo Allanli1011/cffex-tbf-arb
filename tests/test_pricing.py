@@ -344,6 +344,92 @@ def test_second_friday():
     assert _second_friday(2025, 3) == dt.date(2025, 3, 14)
 
 
+# ---- Calendar spreads ---------------------------------------------------
+
+
+def test_compute_spreads_three_contracts():
+    """All three legs (near_mid / mid_far / near_far) should be emitted."""
+    from src.pricing.spreads import compute_spreads_for_date
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "date": ["2026-04-24"] * 3,
+        "contract_id": ["T2606", "T2609", "T2612"],
+        "product": ["T", "T", "T"],
+        "settle": [108.735, 108.650, 108.540],
+    })
+    spreads = compute_spreads_for_date(df)
+    assert len(spreads) == 3
+    legs = {s.leg for s in spreads}
+    assert legs == {"near_mid", "mid_far", "near_far"}
+    nm = next(s for s in spreads if s.leg == "near_mid")
+    assert nm.spread == pytest.approx(108.650 - 108.735)
+
+
+def test_compute_spreads_only_two_contracts():
+    """With two contracts, only near_mid is emitted."""
+    from src.pricing.spreads import compute_spreads_for_date
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "date": ["2026-04-24"] * 2,
+        "contract_id": ["T2606", "T2609"],
+        "product": ["T", "T"],
+        "settle": [108.735, 108.650],
+    })
+    spreads = compute_spreads_for_date(df)
+    assert len(spreads) == 1
+    assert spreads[0].leg == "near_mid"
+
+
+def test_compute_spreads_multi_product():
+    """Spreads computed independently per product."""
+    from src.pricing.spreads import compute_spreads_for_date
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "date": ["2026-04-24"] * 4,
+        "contract_id": ["T2606", "T2609", "TF2606", "TF2609"],
+        "product": ["T", "T", "TF", "TF"],
+        "settle": [108.735, 108.650, 106.250, 106.105],
+    })
+    spreads = compute_spreads_for_date(df)
+    products = {s.product for s in spreads}
+    assert products == {"T", "TF"}
+
+
+def test_days_diff_quarterly():
+    from src.pricing.spreads import _delivery_month_diff_days
+    # T2606 → T2609 = 3 months ≈ 90 days
+    assert _delivery_month_diff_days("T2606", "T2609") == 90
+    # Across year boundary
+    assert _delivery_month_diff_days("T2612", "T2703") == 90
+
+
+def test_rolling_zscore():
+    from src.pricing.spreads import add_rolling_zscore
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "date": [f"2026-01-{i:02d}" for i in range(1, 41)],
+        "product": ["T"] * 40,
+        "leg": ["near_mid"] * 40,
+        "near_contract": ["T2606"] * 40,
+        "far_contract": ["T2609"] * 40,
+        "near_settle": [100.0] * 40,
+        "far_settle": [100.0] * 40,
+        "spread": list(range(40)),       # monotonically increasing
+        "days_diff": [90] * 40,
+    })
+    df = add_rolling_zscore(df, window=10, min_periods=5)
+    # Final z should be positive (latest value above mean)
+    assert df["z10"].iloc[-1] > 0
+    # Within rolling window of 10 monotonic ints, latest is the max → percentile=1
+    assert df["percentile10"].iloc[-1] == pytest.approx(1.0)
+    # First few values are NaN (below min_periods)
+    assert pd.isna(df["z10"].iloc[0])
+
+
 def test_irr_realistic_t2606_240017():
     """Pull a real (futures, CF, bond) tuple and check IRR is plausible."""
     from src.pricing.bond_pricing import price_from_yield
