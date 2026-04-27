@@ -102,26 +102,38 @@ def _process_day(date: dt.date, force: bool) -> dict[str, int]:
 
 
 def _process_yield_curve(start: dt.date, end: dt.date, force: bool) -> int:
-    """Yield curve API returns a range in one call, so we batch it.
+    """CCDC range API requires window < 1 year; we chunk by 330 days."""
+    parts: list[pd.DataFrame] = []
+    cur = start
+    while cur <= end:
+        chunk_end = min(cur + dt.timedelta(days=330), end)
+        try:
+            df = fetch_treasury_yield_curve(cur.isoformat(), chunk_end.isoformat())
+            if not df.empty:
+                parts.append(df)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                f"yield_curve fetch {cur}..{chunk_end} failed: {exc}"
+            )
+        cur = chunk_end + dt.timedelta(days=1)
 
-    Saves one parquet per date covered.
-    """
-    try:
-        df = fetch_treasury_yield_curve(start.isoformat(), end.isoformat())
-    except Exception as exc:  # noqa: BLE001
-        logger.error(f"yield_curve fetch failed: {exc}")
-        return -1
-
-    if df.empty:
+    if not parts:
         logger.warning("yield_curve: no rows in range")
         return 0
 
+    combined = pd.concat(parts, ignore_index=True).drop_duplicates(
+        subset=["date", "tenor_years"]
+    )
     n_total = 0
-    for d, sub in df.groupby("date"):
+    for d, sub in combined.groupby("date"):
         n = _save_parquet(sub, "bond_yield_curve", d, force)
         if n != -1:
-            logger.info(f"[{d}] yield_curve: {n} rows")
             n_total += n
+    if n_total:
+        logger.info(
+            f"yield_curve: {n_total} rows across "
+            f"{combined['date'].nunique()} days"
+        )
     return n_total
 
 
