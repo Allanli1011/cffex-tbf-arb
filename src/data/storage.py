@@ -32,9 +32,8 @@ SQLITE_PATH = DATA_ROOT / "sqlite" / "meta.db"
 PARQUET_DATASETS = {
     "futures_daily": PARQUET_ROOT / "futures_daily",
     "bond_yield_curve": PARQUET_ROOT / "bond_yield_curve",
-    "bond_valuation": PARQUET_ROOT / "bond_valuation",
-    "repo_rate": PARQUET_ROOT / "repo_rate",
-    "shibor": PARQUET_ROOT / "shibor",
+    "bond_valuation": PARQUET_ROOT / "bond_valuation",  # populated in Phase 2
+    "repo_rate": PARQUET_ROOT / "repo_rate",            # holds CFETS / GC / Shibor
     "futures_oi_rank": PARQUET_ROOT / "futures_oi_rank",
 }
 

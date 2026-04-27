@@ -94,7 +94,15 @@ class _StubFetcher(Fetcher):
         return pd.DataFrame({"date": ["2026-01-02"], "value": [1.23]})
 
 
-def test_etl_job_runs_and_records():
+def test_etl_job_runs_and_records(tmp_path, monkeypatch):
+    # Isolate from the real data directory: use a tmp parquet datasets map
+    # and a fresh SQLite file.
+    monkeypatch.setattr(storage, "SQLITE_PATH", tmp_path / "test.db")
+    new_paths = {k: tmp_path / "parquet" / k for k in storage.PARQUET_DATASETS}
+    for p in new_paths.values():
+        p.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(storage, "PARQUET_DATASETS", new_paths)
+
     storage.init_schema()
     job = ETLJob(
         name="stub_test",

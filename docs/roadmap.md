@@ -43,25 +43,28 @@
 - [x] 可交割券池维护：与 CF 表同源，`CFFEXDeliverableBondFetcher` 一次拉取所有可交割券信息
 
 ### 1.3 行情数据
-- [ ] 期货日线接入（`akshare.futures_zh_daily_sina`，覆盖 TS/TF/T/TL 全部活跃合约）
-- [ ] 期货持仓排名（`akshare.get_cffex_rank_table`）
-- [ ] 中债收益率曲线（`akshare.bond_china_yield`，关键期限 1Y/3Y/5Y/7Y/10Y/30Y）
-- [ ] 国债现券估值（中债估值，按可交割券代码批量拉）
+- [x] 期货日线接入（`get_cffex_daily`：OHLCV + settle + pre_settle + OI + turnover）
+- [x] 期货持仓排名（`get_cffex_rank_table`，flatten 为 long 格式）
+- [x] 中债收益率曲线（`bond_china_yield`，关键期限 3M/6M/1Y/3Y/5Y/7Y/10Y/30Y）
+- [ ] 国债现券估值（推迟到 Phase 2 与定价引擎一起做）
 
 ### 1.4 资金面数据
-- [ ] DR007 / R007（`akshare.repo_rate_hist`）
-- [ ] GC007（交易所回购日频）
-- [ ] Shibor 全期限（`akshare.macro_china_shibor_all`）
-- [ ] FR007（中国货币网）
+- [x] CFETS 日定盘 FR/FDR 全 6 个序列（`repo_rate_hist`）
+- [x] GC001/GC007/GC014（`bond_buy_back_hist_em`，含 inter-symbol 节流）
+- [x] Shibor 全期限 O/N..1Y（`macro_china_shibor_all`）
+- [x] 端到端验证：单日 17 个利率序列覆盖
 
 ### 1.5 数据校验
-- [ ] 每个 ETL 输出 sanity check 报告（缺失日、异常值、价格 0、CF 越界）
-- [ ] 失败重试 + 告警（邮件或日志）
+- [x] `src/data/audit.py` 9 类检查：inventory / consistency / completeness / range / calendar gaps
+- [x] `scripts/data_audit.py` Markdown 与 JSON 两种报告
+- [x] 当前基线：16 ok / 3 warning / 0 error，warning 全为预期（bond_valuation 待 Phase 2、回填窗口缺口）
+- [x] CFFEX CSV 历史回填（Wayback 2024-08-16 快照 + 现行 CSV，覆盖 T1803–TS2612 共 8 年 944 行）
+- [x] 每日原始 CSV 归档机制（`populate_contracts.py --snapshot`）
 
 **交付物**：
-- 一键运行 `scripts/run_daily_etl.py` 完成所有日频数据更新
-- 历史回填脚本可拉取过去 3 年的数据（约几十万行）
-- 数据完整性 dashboard（简单的 markdown 报告即可）
+- ✅ `scripts/backfill_market_data.py` 完成所有日频数据更新
+- ✅ 历史回填脚本：CFFEX 公告 / Wayback 快照 / Custom URL 三种模式
+- ✅ `scripts/data_audit.py` 数据完整性 markdown / JSON 报告
 
 ## Phase 2 — 定价与信号引擎
 
