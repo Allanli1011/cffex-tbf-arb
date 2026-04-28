@@ -151,3 +151,58 @@ def test_parse_skips_non_tbf_lines():
     snaps = parse_deliverable_csv(raw)
     assert len(snaps) == 1
     assert snaps[0].contract_id == "T2606"
+
+
+# ---- Sina exchange bond fetcher (offline shape only) --------------------
+
+
+def test_fetch_sina_bond_history_empty_input_returns_empty():
+    """An empty/missing sh_code yields an empty DataFrame with the right
+    schema rather than raising."""
+    from src.data.fetchers import EXCHANGE_BOND_COLUMNS, fetch_sina_bond_history
+
+    df = fetch_sina_bond_history("")
+    assert df.empty
+    assert list(df.columns) == EXCHANGE_BOND_COLUMNS
+
+
+def test_fetch_sina_bond_history_handles_invalid_code(monkeypatch):
+    """An invalid code where Sina returns no payload should yield an empty
+    frame, not raise."""
+    import akshare as ak
+
+    from src.data.fetchers import EXCHANGE_BOND_COLUMNS, fetch_sina_bond_history
+
+    def _stub(symbol):
+        # Reproduce the KeyError that akshare emits for bad symbols
+        raise KeyError("date")
+
+    monkeypatch.setattr(ak, "bond_zh_hs_daily", _stub)
+    df = fetch_sina_bond_history("019999")
+    assert df.empty
+    assert list(df.columns) == EXCHANGE_BOND_COLUMNS
+
+
+def test_fetch_sina_bond_history_normalises_payload(monkeypatch):
+    """Given a synthetic Sina payload, the fetcher should normalise dates,
+    drop the ``sh`` prefix, and coerce numeric columns."""
+    import akshare as ak
+    import pandas as pd
+
+    from src.data.fetchers import fetch_sina_bond_history
+
+    payload = pd.DataFrame({
+        "date": pd.to_datetime(["2026-04-22", "2026-04-24"]).date,
+        "open": [108.50, 108.78],
+        "high": [108.60, 108.90],
+        "low": [108.45, 108.70],
+        "close": [108.78, 108.85],
+        "volume": [39000, 12000],
+    })
+    monkeypatch.setattr(ak, "bond_zh_hs_daily", lambda symbol: payload.copy())
+
+    df = fetch_sina_bond_history("sh019697")
+    assert len(df) == 2
+    assert df["sh_code"].unique().tolist() == ["019697"]
+    assert df["date"].iloc[0] == "2026-04-22"
+    assert df["close"].iloc[1] == pytest.approx(108.85)

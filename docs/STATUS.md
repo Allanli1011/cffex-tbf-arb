@@ -1,8 +1,8 @@
 # Project Status
 
-> Last updated: 2026-04-28 (Phase 2.3 + 3 + 4 done). Read this first when
-> resuming work in a new session — it captures everything needed to pick
-> up without re-reading the conversation history.
+> Last updated: 2026-04-28 (Phase 1.3 v1 + 2.3 + 3 + 4 done). Read this
+> first when resuming work in a new session — it captures everything
+> needed to pick up without re-reading the conversation history.
 
 ## Constraint
 
@@ -16,7 +16,7 @@ frequency. Use system Python 3.9.6 directly, no venv.
 | 0 — 脚手架 / 文档 | ✅ done |
 | 1.1 — 基础设施 (storage / utils / ETL base / calendar) | ✅ done |
 | 1.2 — 合约 / CF / bonds master | ✅ done; 944 historical CFs (T1803..TS2612) |
-| 1.3 — 行情 (futures daily / OI rank / yield curve) | ✅ done; **现券估值推迟** |
+| 1.3 — 行情 (futures / OI rank / yield curve / 单券估值 v1) | ✅ done; Sina 交易所收盘 → 解 YTM；TL 偏差 -490→-129bp |
 | 1.4 — 资金面 (CFETS / GC / Shibor, 15 系列) | ✅ done |
 | 1.5 — 数据校验 (audit + report) | ✅ done; baseline 16 ok / 3 warning / 0 error |
 | 2.1 — CF 公式 + 应计利息 | ✅ done; max diff vs official 47bp (1 outlier) |
@@ -40,7 +40,7 @@ src/data/
   bonds.py          — bonds master upsert
   cf_table.py       — append-only CF table (CFConflictError)
   cffex_scraper.py  — 公告页爬虫（增量 CF 通知）
-  fetchers.py       — CFFEX CSV / 期货日线 / OI rank / 收益率曲线 / 3 套资金面
+  fetchers.py       — CFFEX CSV / 期货日线 / OI rank / 收益率曲线 / 3 套资金面 / Sina 单券收盘
   audit.py          — 9 类数据质量检查
   utils.py          — loguru + retry decorator
 
@@ -73,13 +73,14 @@ scripts/
   compute_calendar_spreads.py — 跨期价差 + Z-score
   compute_curve_signals.py    — 蝶式 / 陡平 + 60d Z（DV01 中性比例）
   compute_ctd_switch.py       — CTD 切换概率（MC，per-(date, contract)）
+  backfill_bond_valuation.py — Sina 交易所收盘 → 单券 YTM 求解，写 bond_valuation
   run_backtest.py            — CLI 跑策略，写 trades + nav parquet + SQLite 指标
 
 tests/
   test_infra.py / test_cf_table.py / test_fetchers.py /
   test_market_fetchers.py / test_audit.py / test_pricing.py /
   test_backtest.py
-  共 123/123 通过（offline）+ 7 联网用例
+  共 126/126 通过（offline）+ 7 联网用例
 ```
 
 ## 数据库现状（2026-04-28）
@@ -92,6 +93,7 @@ tests/
 | `futures_daily` parquet | 3000 / 250 天 | 2025-04-14..2026-04-24 |
 | `futures_oi_rank` parquet | 41730 | 同上 |
 | `bond_yield_curve` parquet | 2056 / 257 天 | 同上 |
+| `bond_valuation` parquet | 4359 / 147 天 | Sina 交易所收盘 → 单券 YTM |
 | `repo_rate` parquet | 3850 / 258 天 | 15 利率序列 |
 | `basis_signals` parquet | 11079 / 144 天 | IRR + DV01 |
 | `calendar_spreads` parquet | 3000 / 250 天 | Z-score 含 |
@@ -104,16 +106,17 @@ tests/
 
 1. **CF 表 append-only** — `(contract, bond)` 一旦写入永不修改；冲突即报错而非覆盖。
 2. **Wayback 2024-08-16 快照已锁住 5+ 年历史** — 缺口仅 T2506-T2603 等 16 合约，留待用公式补。
-3. **现券估值用 par 曲线插值** — 已知偏差：TL 系列 IRR 系统性偏负 ~400bp（CTD 高息老券真实 YTM 高于 par）。Phase 2.6 / Phase 3 不修，等接入 CCDC per-bond 估值再修。
+3. **单券估值（v1）已接入** — Phase 1.3 完成。Sina 交易所日收盘 → ``yield_from_price`` 解 YTM，写 ``bond_valuation`` parquet；``compute_basis_signals`` 优先用单券 YTM，缺数据则 fallback par 曲线。覆盖：50% 行 (5587/11079)，TL 68% / TS 48% / T 46% / TF 30%。**TL bias 从 -490bp → -129bp（74% 修复）**；剩余 -129bp 来自老券交易所稀疏 + 交易所/银行间价差。CCDC 官方付息估值仍需付费接入。
 4. **CF 公式精度** — 92.9% 在 5bp 以内，公式实现正确；个别 outlier 是中途加入交割池的特殊券（T1809/180020 47bp），不调公式。
 5. **GC001/GC014 历史回填留缺** — 本机 eastmoney 代理拦截，GC007 已完整。
 6. **CFETS 接口按月切片** — `repo_rate_hist` 跨月偶发返回单行，已分月拉取。
 7. **CCDC 收益率曲线 < 1 年限制** — `_process_yield_curve` 自动 330 天分段。
 8. **eastmoney 节流** — 多 GC 代码连续拉触发限流，已加 3s inter-symbol 延迟。
 
-## 已知信号样本（2026-04-24）
+## 已知信号样本（2026-04-24，Phase 1.3 修正后）
 
 - T2606 CTD = 230004，IRR=1.71%，vs FDR007=1.31% → +40bp 正向基差信号
+- TL2606 CTD = 220008（旧 210014），IRR=3.31% → **+200bp 正向基差**（修前为 -300bp）
 - T2609-T2612 价差 z60=-2.33（4% 分位） → 跨期信号
 - T 系列 DV01 ≈ 697 RMB/bp/合约；TL ≈ 1999；TF ≈ 466；TS ≈ 402
 - 2-5-10 fly = -0.34bp（z60=+1.56），belly 略贵
@@ -163,13 +166,14 @@ tests/
 
 **B. 加深信号（已声明但未实现）**
 - ✅ Phase 2.3 — CTD 切换概率
-- **Phase 1.3 — 现券估值（CCDC bond_valuation parquet）** ⛔ 修 TL -400bp 偏差 ← next up
+- ✅ Phase 1.3 v1 — 单券估值 Sina 交易所方案（TL 偏差 -490→-129bp）
+- ⛔ Phase 1.3 v2（可选）— 接 CCDC 付费估值或 chinabond.com.cn 公开接口扫描，剩余 -129bp 残差
 
 **C. 加宽面板（Phase 5/6）**
 - Phase 5：模块 E CTD 与交割 / 模块 G 持仓与风险 / 模块 H 信号告警 webhook
 - Phase 6：ML 信号、regime 分类、流动性评分、压力测试场景库
 
-**建议顺序**：~~Phase 2.3~~ → Phase 1.3 (CCDC) → Phase 5 → Phase 6。
+**建议顺序**：~~Phase 2.3~~ → ~~Phase 1.3 v1~~ → Phase 5 → Phase 6。
 
 ## 常用命令
 
@@ -177,6 +181,7 @@ tests/
 # 日终 ETL（cron 推荐 16:30+ 跑）
 python3 scripts/populate_contracts.py --snapshot
 python3 scripts/backfill_market_data.py
+python3 scripts/backfill_bond_valuation.py        # Phase 1.3 单券估值
 python3 scripts/compute_basis_signals.py
 python3 scripts/compute_calendar_spreads.py
 python3 scripts/compute_curve_signals.py

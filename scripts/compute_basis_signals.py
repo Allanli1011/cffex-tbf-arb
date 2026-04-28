@@ -67,14 +67,23 @@ def _delivery_date_for(contract_id: str) -> dt.date:
     return _second_friday(month_start.year, month_start.month)
 
 
-def _load_inputs(date: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, float | None]:
-    """Return (futures_daily, yield_curve, cf_join_bonds, fdr007_pct) for one date."""
+def _load_inputs(
+    date: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, float | None, dict[str, float]]:
+    """Return (futures_daily, yield_curve, cf_join_bonds, fdr007_pct,
+    bond_valuation_ytm) for one date.
+
+    ``bond_valuation_ytm`` maps ``bond_code -> ytm_decimal`` for any
+    bonds with an observed exchange close that day; it overrides the
+    par-curve interpolation when present (Phase 1.3 single-bond YTM).
+    """
     fpath = PARQUET_DATASETS["futures_daily"] / f"{date}.parquet"
     cpath = PARQUET_DATASETS["bond_yield_curve"] / f"{date}.parquet"
     rpath = PARQUET_DATASETS["repo_rate"] / f"{date}.parquet"
+    vpath = PARQUET_DATASETS["bond_valuation"] / f"{date}.parquet"
 
     if not fpath.exists() or not cpath.exists():
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None, {}
 
     futures = pd.read_parquet(fpath)
     curve = pd.read_parquet(cpath)
@@ -97,12 +106,22 @@ def _load_inputs(date: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, f
             conn,
         )
 
-    return futures, curve, cfs, fdr007
+    bond_ytm: dict[str, float] = {}
+    if vpath.exists():
+        try:
+            v = pd.read_parquet(vpath)
+            for _, r in v.iterrows():
+                if pd.notna(r.get("ytm_pct")):
+                    bond_ytm[str(r["bond_code"])] = float(r["ytm_pct"]) / 100.0
+        except Exception:  # noqa: BLE001 — corrupt parquet shouldn't break ETL
+            pass
+
+    return futures, curve, cfs, fdr007, bond_ytm
 
 
 def _compute_for_date(date: str) -> pd.DataFrame:
     valuation = dt.date.fromisoformat(date)
-    futures, curve, cfs, fdr007 = _load_inputs(date)
+    futures, curve, cfs, fdr007, bond_ytm = _load_inputs(date)
     if futures.empty or curve.empty or cfs.empty:
         return pd.DataFrame()
 
@@ -133,10 +152,17 @@ def _compute_for_date(date: str) -> pd.DataFrame:
         if delivery <= valuation or delivery > maturity:
             continue
 
-        # Interpolate yield at the bond's remaining tenor (years from valuation)
-        bond_tenor = (maturity - valuation).days / 365.0
-        ytm_pct = interpolate_yield(tenors, yields_pct, bond_tenor)
-        ytm = ytm_pct / 100.0
+        # Prefer bond-specific YTM from bond_valuation parquet (Phase 1.3)
+        # when available; otherwise fall back to par-curve interpolation
+        # at the bond's remaining tenor.
+        bond_specific = bond_ytm.get(str(r.bond_code))
+        if bond_specific is not None:
+            ytm = bond_specific
+            ytm_source = "bond_valuation"
+        else:
+            bond_tenor = (maturity - valuation).days / 365.0
+            ytm = interpolate_yield(tenors, yields_pct, bond_tenor) / 100.0
+            ytm_source = "par_curve"
 
         product = (r.contract_id[:2] if r.contract_id[:2] in {"TS", "TF", "TL"}
                    else r.contract_id[0])
@@ -184,6 +210,7 @@ def _compute_for_date(date: str) -> pd.DataFrame:
             "cf": float(r.cf),
             "futures_settle": futures_settle,
             "ytm_used": ytm,
+            "ytm_source": ytm_source,
             "implied_ytm": implied_ytm,
             "bond_clean": pricing.clean,
             "modified_duration": pricing.modified_dur,

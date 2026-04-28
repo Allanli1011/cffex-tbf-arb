@@ -500,3 +500,43 @@ def fetch_shibor() -> pd.DataFrame:
     return long.dropna(subset=["value_pct"]).reset_index(drop=True)[
         REPO_RATE_COLUMNS
     ]
+
+
+# ---- Exchange-listed bond clean-price history ---------------------------
+
+EXCHANGE_BOND_COLUMNS = ["date", "sh_code", "open", "high", "low", "close", "volume"]
+
+
+@retry(max_attempts=3, initial_wait=2.0)
+def fetch_sina_bond_history(sh_code: str) -> pd.DataFrame:
+    """Sina daily OHLCV for an exchange-listed Chinese government bond.
+
+    ``sh_code`` is the SSE code, e.g. ``019697`` for 230004. Sina expects
+    the prefix ``sh``; we add it if missing. Coverage is sparse for old
+    off-the-run bonds but ~100% for new benchmark issues.
+
+    Returns columns ``[date, sh_code, open, high, low, close, volume]``;
+    empty DataFrame when the bond has no exchange trading history.
+    """
+    import akshare as ak
+
+    if not sh_code:
+        return pd.DataFrame(columns=EXCHANGE_BOND_COLUMNS)
+    symbol = sh_code if sh_code.startswith("sh") else f"sh{sh_code}"
+    try:
+        raw = ak.bond_zh_hs_daily(symbol=symbol)
+    except KeyError:
+        # Sina returns empty payload for invalid/no-history codes,
+        # which manifests as a KeyError inside akshare.
+        return pd.DataFrame(columns=EXCHANGE_BOND_COLUMNS)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=EXCHANGE_BOND_COLUMNS)
+
+    df = raw.copy()
+    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    df["sh_code"] = sh_code.lstrip("sh")
+    for col in ("open", "high", "low", "close", "volume"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df[EXCHANGE_BOND_COLUMNS].dropna(
+        subset=["close"]
+    ).reset_index(drop=True)
