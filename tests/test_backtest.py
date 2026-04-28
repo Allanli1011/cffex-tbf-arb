@@ -142,3 +142,48 @@ def test_metrics_zero_trades():
     assert m.n_trades == 0
     assert m.hit_rate == 0.0
     assert m.sharpe_annualised == 0.0
+
+
+# ---- Strategy registry --------------------------------------------------
+
+
+def test_strategy_registry_has_all_six():
+    """The registry should expose all six v1 strategies."""
+    from src.backtest.strategies import STRATEGY_REGISTRY
+
+    expected = {
+        "calendar_mr_T_near_far",
+        "basis_long_carry_T",
+        "curve_mr_fly_2_5_10",
+        "curve_mr_fly_5_10_30",
+        "curve_mr_steepener_2s10s",
+        "curve_mr_steepener_5s30s",
+    }
+    assert expected.issubset(set(STRATEGY_REGISTRY))
+
+
+def test_curve_runner_unknown_structure_raises():
+    """Passing an unknown structure to the curve runner should error out."""
+    from src.backtest.strategies import run_curve_mean_reversion
+
+    with pytest.raises(ValueError):
+        run_curve_mean_reversion(structure="fly_made_up")
+
+
+def test_curve_runner_returns_three_part_tuple():
+    """Smoke test on real curve_signals data: each runner returns
+    ``(trades, nav, params)`` with consistent shapes."""
+    from src.backtest.strategies import (
+        CURVE_CONTRACT_SIZE,
+        run_curve_mean_reversion,
+    )
+
+    structure = "fly_5_10_30"
+    trades, nav, params = run_curve_mean_reversion(structure=structure)
+    # nav rows = number of curve_signals rows for this structure
+    assert isinstance(trades, pd.DataFrame)
+    assert isinstance(nav, pd.DataFrame)
+    assert params["structure"] == structure
+    assert params["contract_size"] == CURVE_CONTRACT_SIZE[structure]
+    if not nav.empty:
+        assert "cum_pnl" in nav.columns

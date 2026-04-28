@@ -1,8 +1,8 @@
 # Project Status
 
-> Last updated: 2026-04-28 (Phase 4 done). Read this first when resuming
-> work in a new session — it captures everything needed to pick up
-> without re-reading the conversation history.
+> Last updated: 2026-04-28 (Phase 3 补完 + 4 done). Read this first when
+> resuming work in a new session — it captures everything needed to pick
+> up without re-reading the conversation history.
 
 ## Constraint
 
@@ -25,7 +25,7 @@ frequency. Use system Python 3.9.6 directly, no venv.
 | 2.4 — 跨期价差 + Z-score | ✅ done; 3000 spread rows × 250 days |
 | 2.5 — 期货隐含 yield + DV01 | ✅ done; matches industry typical |
 | 2.6 — 蝶式 / 陡平 (DV01 中性) | ✅ done; 576 curve_signals × 144 days |
-| 3 — 回测框架 | ✅ done; 2 策略 / 16 trades / Sharpe +2.77 & +0.59 |
+| 3 — 回测框架 | ✅ done; 6 策略（basis / calendar / 4 curve）|
 | 4 — Streamlit MVP 面板 | ✅ done; 5 tabs（Overview/Basis/Calendar/Curve/Backtest）|
 | 5 — 完整面板 (8 模块) | ⛔ **next up** |
 | 6 — ML / regime / 流动性评分 / 压测 | ⛔ todo |
@@ -54,7 +54,7 @@ src/pricing/
 
 src/backtest/
   engine.py         — 单策略事件循环（mean-reversion + directional carry）
-  strategies.py     — calendar_mr_T_near_far / basis_long_carry_T
+  strategies.py     — 6 策略：calendar / basis / 4 curve mean-reversion
   metrics.py        — Sharpe / max DD / hit rate / hit count
 
 app/
@@ -77,7 +77,7 @@ tests/
   test_infra.py / test_cf_table.py / test_fetchers.py /
   test_market_fetchers.py / test_audit.py / test_pricing.py /
   test_backtest.py
-  共 115/115 通过（offline）+ 7 联网用例
+  共 118/118 通过（offline）+ 7 联网用例
 ```
 
 ## 数据库现状（2026-04-28）
@@ -94,8 +94,8 @@ tests/
 | `basis_signals` parquet | 11079 / 144 天 | IRR + DV01 |
 | `calendar_spreads` parquet | 3000 / 250 天 | Z-score 含 |
 | `curve_signals` parquet | 576 / 144 天 | 4 结构 × 144 天，含 60d Z |
-| `backtest_runs` parquet | 2 runs (16 trades + 365 nav rows) | calendar_T_v1 + basis_T_v1 |
-| `backtest_runs` (SQLite) | 2 行 | params + metrics JSON |
+| `backtest_runs` parquet | 6 runs (26 trades + 720 nav rows) | calendar / basis / 4 curve |
+| `backtest_runs` (SQLite) | 6 行 | params + metrics JSON |
 
 ## 关键设计决策（已确定，不要再讨论）
 
@@ -120,27 +120,33 @@ tests/
 
 ## 已知回测结果（v1，144 天样本）
 
-| run_id | trades | hit | total P&L | Sharpe | max DD |
+| run_id | trades | hit | total P&L (RMB) | Sharpe | max DD |
 |---|---|---|---|---|---|
-| `calendar_T_v1` (z>2 反转) | 8 | 50% | +2,050 RMB/合约 | +0.59 | -3,450 |
-| `basis_T_v1` (irr-fdr007>30bp) | 8 | 87.5% | +10,352 RMB/合约 | +2.77 | -1,756 |
+| `calendar_T_v1` (T near_far z>2 反转) | 8 | 50% | +2,050 | +0.59 | -3,450 |
+| `basis_T_v1` (irr-fdr007>30bp) | 8 | 87.5% | +10,352 | **+2.77** | -1,756 |
+| `curve_mr_fly_2_5_10_v1` | 3 | 67% | +178 | +0.07 | -3,143 |
+| `curve_mr_fly_5_10_30_v1` | 2 | 50% | -3,396 | -0.76 | -5,379 |
+| `curve_mr_steepener_2s10s_v1` | 3 | 67% | +6,591 | **+2.11** | -1,383 |
+| `curve_mr_steepener_5s30s_v1` | 2 | 0% | -24,394 | -1.66 | -35,535 |
 
-注：单合约名义 P&L；样本仅 144 天，未跨完整 cycle，结果仅示意性。
+注：单合约名义 P&L（curve 策略 P&L 单位 ≈ 1 个 belly/long-tenor 合约的 DV01 × 价差变化）；样本仅 144 天，5s30s 跌惨实属过窄样本，需更长历史。
 
-## 下一步：Phase 5（完整面板 8 模块）+ Phase 2.3 / 6
+## 下一步：补完 + 加深
 
-Phase 4 MVP 已经覆盖核心 4 类信号与回测，下一步可往两个方向走：
+**A. 收尾（roadmap 列出但未做）**
+- Phase 1.4 — GC001/GC014 历史回填（eastmoney 节流，仅 GC007 完整 252 天）
+- Phase 1.2 — CF 季度 cron / launchd（代码就绪，定时未设）
+- Phase 3 — 参数扫描与敏感度分析（z 阈值、持仓周期网格）
 
-**A. 加深信号侧（Phase 2.3 + CCDC 接入）**
-- Phase 2.3 — CTD 切换概率（蒙特卡洛或情景分析），约 1.5 小时
-- CCDC 现券估值接入，修复 TL 系列 IRR 偏差（已知 -400bp）
+**B. 加深信号（已声明但未实现）**
+- **Phase 2.3 — CTD 切换概率**（蒙特卡洛 / 情景）⛔ next up
+- **Phase 1.3 — 现券估值（CCDC bond_valuation parquet）** ⛔ 修 TL -400bp 偏差
 
-**B. 加宽面板侧（Phase 5）**
-- 在现有 5 tab 之上扩展为 8 模块：流动性、跨品种、资金面、ETL 健康
-- 加 sidebar 全局日期 picker / 产品 picker
-- 增加交易级 P&L 拆解（gross_basis vs carry）
+**C. 加宽面板（Phase 5/6）**
+- Phase 5：模块 E CTD 与交割 / 模块 G 持仓与风险 / 模块 H 信号告警 webhook
+- Phase 6：ML 信号、regime 分类、流动性评分、压力测试场景库
 
-**建议顺序**：先 Phase 2.3（拓宽信号种类），再 CCDC（修偏差），最后 Phase 5/6。
+**建议顺序**：Phase 2.3 → Phase 1.3 (CCDC) → Phase 5 → Phase 6。
 
 ## 常用命令
 
@@ -152,9 +158,11 @@ python3 scripts/compute_basis_signals.py
 python3 scripts/compute_calendar_spreads.py
 python3 scripts/compute_curve_signals.py
 
-# 回测
+# 回测（共 6 个 registered strategy；--strategy ? 可枚举）
 python3 scripts/run_backtest.py --strategy calendar_mr_T_near_far
 python3 scripts/run_backtest.py --strategy basis_long_carry_T
+python3 scripts/run_backtest.py --strategy curve_mr_fly_5_10_30
+python3 scripts/run_backtest.py --strategy curve_mr_steepener_2s10s
 
 # 启动 Streamlit MVP 面板（5 个 tab）
 python3 -m streamlit run app/streamlit_app.py

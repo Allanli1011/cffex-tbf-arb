@@ -147,7 +147,84 @@ def run_basis_long_carry(
     return trades, nav, params
 
 
+# ---- Strategy 3: curve-structure mean reversion -------------------------
+
+
+# Approximate per-bp dollar-DV01 of each structure's belly leg (long-tenor
+# leg for steepeners). 1 unit of "spread move" then maps to roughly the
+# RMB P&L of holding that many belly contracts. Numbers are stable to
+# ±10% across the 144-day window — adequate for ranking strategies.
+CURVE_CONTRACT_SIZE = {
+    "fly_2_5_10": 470.0,        # TF (5y) belly DV01
+    "fly_5_10_30": 697.0,       # T  (10y) belly DV01
+    "steepener_2s10s": 697.0,   # T  long-leg DV01
+    "steepener_5s30s": 2000.0,  # TL long-leg DV01
+}
+
+
+def load_curve_series(*, structure: str, z_col: str = "z60") -> pd.DataFrame:
+    df = _load_concat("curve_signals")
+    if df.empty:
+        return pd.DataFrame(columns=["date", "signal", "price"])
+    sub = df[df["structure"] == structure].copy()
+    sub = sub.sort_values("date").dropna(subset=[z_col, "spread_bp"])
+    sub = sub[["date", z_col, "spread_bp"]]
+    sub.columns = ["date", "signal", "price"]
+    sub["signal"] = sub["signal"].astype(float)
+    sub["price"] = sub["price"].astype(float)
+    return sub.reset_index(drop=True)
+
+
+def run_curve_mean_reversion(
+    *,
+    structure: str,
+    entry_z: float = 2.0,
+    exit_z: float = 0.5,
+    max_hold_days: int = 20,
+    contract_size: float | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Mean-revert a butterfly or steepener spread keyed on its 60-day Z.
+
+    P&L is in approximate RMB per "1 belly contract" — see
+    :data:`CURVE_CONTRACT_SIZE`.
+    """
+    if structure not in CURVE_CONTRACT_SIZE:
+        raise ValueError(
+            f"Unknown structure {structure!r}; "
+            f"known: {sorted(CURVE_CONTRACT_SIZE)}"
+        )
+    if contract_size is None:
+        contract_size = CURVE_CONTRACT_SIZE[structure]
+    series = load_curve_series(structure=structure)
+    rule = BacktestRule(
+        entry_threshold=entry_z, exit_threshold=exit_z,
+        max_hold_days=max_hold_days,
+        contract_size=contract_size,
+    )
+    strategy = f"curve_mr_{structure}"
+    trades, nav = run_mean_reversion(series, strategy=strategy, rule=rule)
+    params = {
+        "loader": "curve_signals",
+        "structure": structure,
+        "entry_z": entry_z, "exit_z": exit_z,
+        "max_hold_days": max_hold_days,
+        "contract_size": contract_size,
+    }
+    return trades, nav, params
+
+
+def _curve_runner(structure: str):
+    def _runner(**kwargs):
+        return run_curve_mean_reversion(structure=structure, **kwargs)
+    _runner.__name__ = f"run_curve_mr_{structure}"
+    return _runner
+
+
 STRATEGY_REGISTRY = {
     "calendar_mr_T_near_far": run_calendar_mean_reversion,
     "basis_long_carry_T": run_basis_long_carry,
+    "curve_mr_fly_2_5_10": _curve_runner("fly_2_5_10"),
+    "curve_mr_fly_5_10_30": _curve_runner("fly_5_10_30"),
+    "curve_mr_steepener_2s10s": _curve_runner("steepener_2s10s"),
+    "curve_mr_steepener_5s30s": _curve_runner("steepener_5s30s"),
 }
