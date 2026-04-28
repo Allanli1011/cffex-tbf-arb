@@ -1,8 +1,8 @@
 # Project Status
 
-> Last updated: 2026-04-28. Read this first when resuming work in a new
-> session — it captures everything needed to pick up without re-reading
-> the conversation history.
+> Last updated: 2026-04-28 (Phase 3 done). Read this first when resuming
+> work in a new session — it captures everything needed to pick up
+> without re-reading the conversation history.
 
 ## Constraint
 
@@ -25,8 +25,8 @@ frequency. Use system Python 3.9.6 directly, no venv.
 | 2.4 — 跨期价差 + Z-score | ✅ done; 3000 spread rows × 250 days |
 | 2.5 — 期货隐含 yield + DV01 | ✅ done; matches industry typical |
 | 2.6 — 蝶式 / 陡平 (DV01 中性) | ✅ done; 576 curve_signals × 144 days |
-| 3 — 回测框架 | ⛔ **next up** |
-| 4 — Streamlit MVP 面板 | ⛔ todo |
+| 3 — 回测框架 | ✅ done; 2 策略 / 16 trades / Sharpe +2.77 & +0.59 |
+| 4 — Streamlit MVP 面板 | ⛔ **next up** |
 | 5 — 完整面板 (8 模块) | ⛔ todo |
 | 6 — ML / regime / 流动性评分 / 压测 | ⛔ todo |
 
@@ -52,6 +52,11 @@ src/pricing/
   spreads.py        — 跨期价差（near_mid / mid_far / near_far）+ rolling Z
   curve_trades.py   — DV01 中性权重 / 50/50 蝶式 / fly_yield_bp + steepener_bp
 
+src/backtest/
+  engine.py         — 单策略事件循环（mean-reversion + directional carry）
+  strategies.py     — calendar_mr_T_near_far / basis_long_carry_T
+  metrics.py        — Sharpe / max DD / hit rate / hit count
+
 scripts/
   populate_contracts.py   — CFFEX 全量 CF（--snapshot 归档原始 CSV）
   refresh_cf.py           — CFFEX 公告增量
@@ -62,11 +67,13 @@ scripts/
   compute_basis_signals.py — 日终 IRR + DV01 + CTD 信号
   compute_calendar_spreads.py — 跨期价差 + Z-score
   compute_curve_signals.py    — 蝶式 / 陡平 + 60d Z（DV01 中性比例）
+  run_backtest.py            — CLI 跑策略，写 trades + nav parquet + SQLite 指标
 
 tests/
   test_infra.py / test_cf_table.py / test_fetchers.py /
-  test_market_fetchers.py / test_audit.py / test_pricing.py
-  共 108/108 通过（offline）+ 7 联网用例
+  test_market_fetchers.py / test_audit.py / test_pricing.py /
+  test_backtest.py
+  共 115/115 通过（offline）+ 7 联网用例
 ```
 
 ## 数据库现状（2026-04-28）
@@ -83,6 +90,8 @@ tests/
 | `basis_signals` parquet | 11079 / 144 天 | IRR + DV01 |
 | `calendar_spreads` parquet | 3000 / 250 天 | Z-score 含 |
 | `curve_signals` parquet | 576 / 144 天 | 4 结构 × 144 天，含 60d Z |
+| `backtest_runs` parquet | 2 runs (16 trades + 365 nav rows) | calendar_T_v1 + basis_T_v1 |
+| `backtest_runs` (SQLite) | 2 行 | params + metrics JSON |
 
 ## 关键设计决策（已确定，不要再讨论）
 
@@ -105,25 +114,38 @@ tests/
 - 2s10s 陡度 = 37.8bp（z60=-0.23），近中性
 - 5s30s 陡度 = 82.7bp（z60=-0.38），略平于均值
 
-## 下一步：Phase 3（事件驱动回测框架）
+## 已知回测结果（v1，144 天样本）
 
-**目标**：用现有 4 类信号（basis / calendar / fly / steepener）建一个简化
-的 backtester，按日订阅 parquet 信号、按规则下单 / 平仓、产出净值与
-夏普比、最大回撤等指标。
+| run_id | trades | hit | total P&L | Sharpe | max DD |
+|---|---|---|---|---|---|
+| `calendar_T_v1` (z>2 反转) | 8 | 50% | +2,050 RMB/合约 | +0.59 | -3,450 |
+| `basis_T_v1` (irr-fdr007>30bp) | 8 | 87.5% | +10,352 RMB/合约 | +2.77 | -1,756 |
+
+注：单合约名义 P&L；样本仅 144 天，未跨完整 cycle，结果仅示意性。
+
+## 下一步：Phase 4（Streamlit MVP 面板）
+
+**目标**：把现有 4 类信号 + 2 个回测结果接入 Streamlit，本地启动浏览
+即可使用。无需登录、无需后端服务。
+
+**面板模块（建议顺序）**：
+1. **Overview** — 当日 4 类信号汇总卡片
+2. **Basis** — IRR / 净基差表格 + IRR-FDR007 时间序列
+3. **Calendar** — 跨期价差 + Z-score 走势图
+4. **Curve** — 蝶式 / 陡平当前位 + 历史分位
+5. **Backtest** — 选择 run，画 NAV 曲线 + 交易表
 
 **验收标准**：
-- 单一信号 → 单一组合，规则可参数化（z 阈值 + 持有期）
-- 至少跑通 1 条 basis 策略 + 1 条 calendar 策略
-- 输出 trades + nav 曲线到 `parquet/backtest_runs/`
-- `backtest_runs` SQLite 表落参数 + 指标
+- `app/streamlit_app.py` 可 `streamlit run` 启动
+- 5 个 tab 正常显示
+- 数据全部读自 parquet / sqlite，无硬编码
 
 ## 后续 Phase 优先顺序（建议）
 
-1. **Phase 3** — 简单事件驱动回测（1 天）
-2. **Phase 2.3** — CTD 切换概率（蒙特卡洛或情景，1.5 小时）
-3. **Phase 4** — Streamlit MVP，可视化 basis / calendar / fly / steepener
-4. CCDC 现券估值接入（修 TL 偏差）
-5. Phase 5/6 完整面板与 ML 信号
+1. **Phase 4** — Streamlit MVP（半天）
+2. **Phase 2.3** — CTD 切换概率（1.5 小时）
+3. CCDC 现券估值接入（修 TL 偏差）
+4. Phase 5/6 完整面板与 ML 信号
 
 ## 常用命令
 
@@ -134,6 +156,10 @@ python3 scripts/backfill_market_data.py
 python3 scripts/compute_basis_signals.py
 python3 scripts/compute_calendar_spreads.py
 python3 scripts/compute_curve_signals.py
+
+# 回测
+python3 scripts/run_backtest.py --strategy calendar_mr_T_near_far
+python3 scripts/run_backtest.py --strategy basis_long_carry_T
 
 # 健康检查
 python3 scripts/data_audit.py -o docs/data_audit.md
