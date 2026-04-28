@@ -1,6 +1,6 @@
 # Project Status
 
-> Last updated: 2026-04-28 (Phase 3 补完 + 4 done). Read this first when
+> Last updated: 2026-04-28 (Phase 2.3 + 3 + 4 done). Read this first when
 > resuming work in a new session — it captures everything needed to pick
 > up without re-reading the conversation history.
 
@@ -21,7 +21,7 @@ frequency. Use system Python 3.9.6 directly, no venv.
 | 1.5 — 数据校验 (audit + report) | ✅ done; baseline 16 ok / 3 warning / 0 error |
 | 2.1 — CF 公式 + 应计利息 | ✅ done; max diff vs official 47bp (1 outlier) |
 | 2.2 — IRR / 基差 / 净基差 | ✅ done; 8988 signals × 144 days |
-| 2.3 — CTD 切换概率 | ⛔ todo |
+| 2.3 — CTD 切换概率 | ✅ done; 蒙特卡洛 + 6 档情景表 |
 | 2.4 — 跨期价差 + Z-score | ✅ done; 3000 spread rows × 250 days |
 | 2.5 — 期货隐含 yield + DV01 | ✅ done; matches industry typical |
 | 2.6 — 蝶式 / 陡平 (DV01 中性) | ✅ done; 576 curve_signals × 144 days |
@@ -51,6 +51,7 @@ src/pricing/
   irr.py            — BasisQuote: gross/net basis, carry, IRR, vs repo bp
   spreads.py        — 跨期价差（near_mid / mid_far / near_far）+ rolling Z
   curve_trades.py   — DV01 中性权重 / 50/50 蝶式 / fly_yield_bp + steepener_bp
+  ctd_probability.py — 平行移位线性 MC + ±25/50/100bp 情景表
 
 src/backtest/
   engine.py         — 单策略事件循环（mean-reversion + directional carry）
@@ -71,13 +72,14 @@ scripts/
   compute_basis_signals.py — 日终 IRR + DV01 + CTD 信号
   compute_calendar_spreads.py — 跨期价差 + Z-score
   compute_curve_signals.py    — 蝶式 / 陡平 + 60d Z（DV01 中性比例）
+  compute_ctd_switch.py       — CTD 切换概率（MC，per-(date, contract)）
   run_backtest.py            — CLI 跑策略，写 trades + nav parquet + SQLite 指标
 
 tests/
   test_infra.py / test_cf_table.py / test_fetchers.py /
   test_market_fetchers.py / test_audit.py / test_pricing.py /
   test_backtest.py
-  共 118/118 通过（offline）+ 7 联网用例
+  共 123/123 通过（offline）+ 7 联网用例
 ```
 
 ## 数据库现状（2026-04-28）
@@ -96,6 +98,7 @@ tests/
 | `curve_signals` parquet | 576 / 144 天 | 4 结构 × 144 天，含 60d Z |
 | `backtest_runs` parquet | 6 runs (26 trades + 720 nav rows) | calendar / basis / 4 curve |
 | `backtest_runs` (SQLite) | 6 行 | params + metrics JSON |
+| `ctd_switch` parquet | 1036 / 144 天 | MC switch prob + 6 档情景 |
 
 ## 关键设计决策（已确定，不要再讨论）
 
@@ -131,6 +134,26 @@ tests/
 
 注：单合约名义 P&L（curve 策略 P&L 单位 ≈ 1 个 belly/long-tenor 合约的 DV01 × 价差变化）；样本仅 144 天，5s30s 跌惨实属过窄样本，需更长历史。
 
+## CTD 切换概率（2026-04-24，5bp/d 假设）
+
+| 合约 | 锚 CTD | 距交割 | 横轴 vol bp | 切换概率 | top alt |
+|---|---|---|---|---|---|
+| T2606 | 250025 | 49 | 35 | 2.0% | 260007 |
+| T2612 | 230018 | 231 | 76 | 19.8% | 260005 |
+| TF2612 | 260003 | 231 | 76 | 9.6% | 260008 |
+| TL2606 | 210014 | 49 | 35 | 31.9% | 260002 |
+| TL2612 | 260002 | 231 | 76 | 66.7% | 220008 |
+| TS2606 | 250024 | 49 | 35 | 0.0% | — |
+
+均值 / 中位（全 144 天）：
+- T 11.6% / 11.5%
+- TF 8.4% / 8.3%
+- TL **54.1% / 57.7%**（长端最不稳定）
+- TS 3.1% / 2.1%
+
+**注**：MC 锚点为 *min-gross-basis*；basis_signals 的 ``is_ctd`` 是 max-IRR。
+**40.8%** 的 (date, contract) 行两套定义不一致（``ctd_anchor_disagrees``），说明 carry 差异对 CTD 排序影响实质性。
+
 ## 下一步：补完 + 加深
 
 **A. 收尾（roadmap 列出但未做）**
@@ -139,14 +162,14 @@ tests/
 - Phase 3 — 参数扫描与敏感度分析（z 阈值、持仓周期网格）
 
 **B. 加深信号（已声明但未实现）**
-- **Phase 2.3 — CTD 切换概率**（蒙特卡洛 / 情景）⛔ next up
-- **Phase 1.3 — 现券估值（CCDC bond_valuation parquet）** ⛔ 修 TL -400bp 偏差
+- ✅ Phase 2.3 — CTD 切换概率
+- **Phase 1.3 — 现券估值（CCDC bond_valuation parquet）** ⛔ 修 TL -400bp 偏差 ← next up
 
 **C. 加宽面板（Phase 5/6）**
 - Phase 5：模块 E CTD 与交割 / 模块 G 持仓与风险 / 模块 H 信号告警 webhook
 - Phase 6：ML 信号、regime 分类、流动性评分、压力测试场景库
 
-**建议顺序**：Phase 2.3 → Phase 1.3 (CCDC) → Phase 5 → Phase 6。
+**建议顺序**：~~Phase 2.3~~ → Phase 1.3 (CCDC) → Phase 5 → Phase 6。
 
 ## 常用命令
 
@@ -157,6 +180,7 @@ python3 scripts/backfill_market_data.py
 python3 scripts/compute_basis_signals.py
 python3 scripts/compute_calendar_spreads.py
 python3 scripts/compute_curve_signals.py
+python3 scripts/compute_ctd_switch.py            # MC 1000 paths / vol 5bp/d
 
 # 回测（共 6 个 registered strategy；--strategy ? 可枚举）
 python3 scripts/run_backtest.py --strategy calendar_mr_T_near_far

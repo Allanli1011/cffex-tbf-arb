@@ -604,3 +604,93 @@ def test_steepener_bp_basic():
     assert steepener_bp(1.20, 1.85) == pytest.approx(65.0)
     # Inverted curve gives negative spread
     assert steepener_bp(2.50, 2.00) == pytest.approx(-50.0)
+
+
+# ---- ctd_probability ----------------------------------------------------
+
+
+def _two_bond_pool():
+    """A toy deliverable pool with one short-duration and one long-duration
+    bond. Both are priced near par with similar gross basis at the current
+    futures level — a parallel shift will determine which is CTD."""
+    from src.pricing.ctd_probability import Deliverable
+    return [
+        # Bond A: 2-year, very low duration
+        Deliverable(bond_code="A_short", clean=100.0, mod_dur=1.9, cf=0.97),
+        # Bond B: 10-year, higher duration
+        Deliverable(bond_code="B_long", clean=100.0, mod_dur=8.5, cf=0.95),
+    ]
+
+
+def test_ctd_switch_zero_horizon_no_switch():
+    """With zero horizon vol, the CTD never switches (same shift = 0
+    every sim)."""
+    from src.pricing.ctd_probability import estimate_ctd_switch_probability
+
+    pool = _two_bond_pool()
+    res = estimate_ctd_switch_probability(
+        pool, current_ctd_bond_code="A_short",
+        days_to_delivery=30, daily_vol_bp=0.0, n_sims=100,
+    )
+    assert res.switch_probability == 0.0
+    assert res.bond_distribution == {"A_short": 1.0}
+
+
+def test_ctd_switch_high_vol_produces_flips():
+    """Under high horizon vol (~150 bp), CTD should switch a non-trivial
+    fraction of the time given the duration spread."""
+    from src.pricing.ctd_probability import estimate_ctd_switch_probability
+
+    pool = _two_bond_pool()
+    res = estimate_ctd_switch_probability(
+        pool, current_ctd_bond_code="A_short",
+        days_to_delivery=900, daily_vol_bp=5.0, n_sims=2000,
+        rng_seed=42,
+    )
+    # 5bp/day × √900 ≈ 150bp horizon vol — duration spread of ~6.6y means
+    # significant CTD flipping is expected
+    assert 0.05 < res.switch_probability < 0.95
+    assert res.top_alternative is not None
+    assert res.top_alternative[0] == "B_long"
+
+
+def test_ctd_switch_unknown_ctd_raises():
+    from src.pricing.ctd_probability import estimate_ctd_switch_probability
+
+    with pytest.raises(ValueError):
+        estimate_ctd_switch_probability(
+            _two_bond_pool(), current_ctd_bond_code="ZZ_missing",
+            days_to_delivery=30,
+        )
+
+
+def test_ctd_switch_deterministic_given_seed():
+    from src.pricing.ctd_probability import estimate_ctd_switch_probability
+
+    pool = _two_bond_pool()
+    a = estimate_ctd_switch_probability(
+        pool, "A_short", days_to_delivery=200,
+        daily_vol_bp=8.0, n_sims=500, rng_seed=7,
+    )
+    b = estimate_ctd_switch_probability(
+        pool, "A_short", days_to_delivery=200,
+        daily_vol_bp=8.0, n_sims=500, rng_seed=7,
+    )
+    assert a.switch_probability == b.switch_probability
+    assert a.bond_distribution == b.bond_distribution
+
+
+def test_scenario_table_covers_each_shift():
+    from src.pricing.ctd_probability import scenario_table
+
+    pool = _two_bond_pool()
+    table = scenario_table(pool, current_ctd_bond_code="A_short",
+                           shifts_bp=(-200, 0, 200))
+    assert [r["shift_bp"] for r in table] == [-200, 0, 200]
+    # Zero shift should never flip
+    zero = next(r for r in table if r["shift_bp"] == 0)
+    assert zero["switched"] is False
+    # Big up-shift drops long-duration bonds more → long bond becomes CTD
+    up = next(r for r in table if r["shift_bp"] == 200)
+    assert up["ctd_bond_code"] == "B_long"
+    assert up["switched"] is True

@@ -39,6 +39,7 @@ PARQUET_DATASETS = {
     "calendar_spreads": PARQUET_ROOT / "calendar_spreads",  # cross-quarter spreads + Z
     "curve_signals": PARQUET_ROOT / "curve_signals",        # butterfly / steepener
     "backtest_runs": PARQUET_ROOT / "backtest_runs",        # per-run trades + nav
+    "ctd_switch": PARQUET_ROOT / "ctd_switch",              # per-(date,contract) CTD MC
 }
 
 # Raw CSV archive — one file per day, never overwritten. Audit trail for
