@@ -1,6 +1,6 @@
 # Project Status
 
-> Last updated: 2026-04-28 (Phase 3 done). Read this first when resuming
+> Last updated: 2026-04-28 (Phase 4 done). Read this first when resuming
 > work in a new session — it captures everything needed to pick up
 > without re-reading the conversation history.
 
@@ -26,8 +26,8 @@ frequency. Use system Python 3.9.6 directly, no venv.
 | 2.5 — 期货隐含 yield + DV01 | ✅ done; matches industry typical |
 | 2.6 — 蝶式 / 陡平 (DV01 中性) | ✅ done; 576 curve_signals × 144 days |
 | 3 — 回测框架 | ✅ done; 2 策略 / 16 trades / Sharpe +2.77 & +0.59 |
-| 4 — Streamlit MVP 面板 | ⛔ **next up** |
-| 5 — 完整面板 (8 模块) | ⛔ todo |
+| 4 — Streamlit MVP 面板 | ✅ done; 5 tabs（Overview/Basis/Calendar/Curve/Backtest）|
+| 5 — 完整面板 (8 模块) | ⛔ **next up** |
 | 6 — ML / regime / 流动性评分 / 压测 | ⛔ todo |
 
 ## Code map
@@ -56,6 +56,10 @@ src/backtest/
   engine.py         — 单策略事件循环（mean-reversion + directional carry）
   strategies.py     — calendar_mr_T_near_far / basis_long_carry_T
   metrics.py        — Sharpe / max DD / hit rate / hit count
+
+app/
+  data_loaders.py   — Streamlit cached parquet/sqlite readers
+  streamlit_app.py  — 5 tab MVP 面板（plotly + dataframe）
 
 scripts/
   populate_contracts.py   — CFFEX 全量 CF（--snapshot 归档原始 CSV）
@@ -123,29 +127,20 @@ tests/
 
 注：单合约名义 P&L；样本仅 144 天，未跨完整 cycle，结果仅示意性。
 
-## 下一步：Phase 4（Streamlit MVP 面板）
+## 下一步：Phase 5（完整面板 8 模块）+ Phase 2.3 / 6
 
-**目标**：把现有 4 类信号 + 2 个回测结果接入 Streamlit，本地启动浏览
-即可使用。无需登录、无需后端服务。
+Phase 4 MVP 已经覆盖核心 4 类信号与回测，下一步可往两个方向走：
 
-**面板模块（建议顺序）**：
-1. **Overview** — 当日 4 类信号汇总卡片
-2. **Basis** — IRR / 净基差表格 + IRR-FDR007 时间序列
-3. **Calendar** — 跨期价差 + Z-score 走势图
-4. **Curve** — 蝶式 / 陡平当前位 + 历史分位
-5. **Backtest** — 选择 run，画 NAV 曲线 + 交易表
+**A. 加深信号侧（Phase 2.3 + CCDC 接入）**
+- Phase 2.3 — CTD 切换概率（蒙特卡洛或情景分析），约 1.5 小时
+- CCDC 现券估值接入，修复 TL 系列 IRR 偏差（已知 -400bp）
 
-**验收标准**：
-- `app/streamlit_app.py` 可 `streamlit run` 启动
-- 5 个 tab 正常显示
-- 数据全部读自 parquet / sqlite，无硬编码
+**B. 加宽面板侧（Phase 5）**
+- 在现有 5 tab 之上扩展为 8 模块：流动性、跨品种、资金面、ETL 健康
+- 加 sidebar 全局日期 picker / 产品 picker
+- 增加交易级 P&L 拆解（gross_basis vs carry）
 
-## 后续 Phase 优先顺序（建议）
-
-1. **Phase 4** — Streamlit MVP（半天）
-2. **Phase 2.3** — CTD 切换概率（1.5 小时）
-3. CCDC 现券估值接入（修 TL 偏差）
-4. Phase 5/6 完整面板与 ML 信号
+**建议顺序**：先 Phase 2.3（拓宽信号种类），再 CCDC（修偏差），最后 Phase 5/6。
 
 ## 常用命令
 
@@ -160,6 +155,9 @@ python3 scripts/compute_curve_signals.py
 # 回测
 python3 scripts/run_backtest.py --strategy calendar_mr_T_near_far
 python3 scripts/run_backtest.py --strategy basis_long_carry_T
+
+# 启动 Streamlit MVP 面板（5 个 tab）
+python3 -m streamlit run app/streamlit_app.py
 
 # 健康检查
 python3 scripts/data_audit.py -o docs/data_audit.md
