@@ -27,8 +27,8 @@ frequency. Use system Python 3.9.6 directly, no venv.
 | 2.5 — 期货隐含 yield + DV01 | ✅ done; matches industry typical |
 | 2.6 — 蝶式 / 陡平 (DV01 中性) | ✅ done; 576 curve_signals × 144 days |
 | 3 — 回测框架 | ✅ done; 6 策略（basis / calendar / 4 curve）|
-| 4 — Streamlit MVP 面板 | ✅ done; 5 tabs（Overview/Basis/Calendar/Curve/Backtest）|
-| 5 — 完整面板 (8 模块) | ⛔ **next up** |
+| 4 — Streamlit MVP 面板 | ✅ done; **6 tabs**（Overview/Basis/Calendar/Curve/CTD/Backtest）|
+| 5 — 完整面板 (8 模块) | 1/3 done（模块 E CTD 已加，G/H 待）|
 | 6 — ML / regime / 流动性评分 / 压测 | ⛔ todo |
 
 ## Code map

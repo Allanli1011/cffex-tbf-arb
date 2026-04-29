@@ -12,15 +12,12 @@
 
 ## P0（高优先级，可立即推进）
 
-### B1. Phase 5 — 模块 E：CTD 与交割分析面板
-- **依赖**：`parquet/ctd_switch/`（已有 1036 行 / 144 天）
-- **新增**：`app/streamlit_app.py` 加 `render_ctd_delivery()` tab
-- **内容**：
-  - 当日所有合约的切换概率排序表
-  - 选中合约 → 蒙特卡洛分布图 + 6 档情景表
-  - IRR-CTD vs min-basis-CTD 不一致提示（`ctd_anchor_disagrees`）
-- **验收**：Streamlit 新 tab 渲染，无空数据
-- **预估**：1–2 小时
+> **B1 已完成 2026-04-30** — 见下方"已完成"区。新的 P0 起点：B2 / B3。
+
+
+### ~~B1. Phase 5 — 模块 E：CTD 与交割分析面板~~ ✅ 2026-04-30
+完成。`render_ctd_delivery()` tab 提供当日切换概率排序表 + 选中合约 6 档情景表
++ 历史时序 + product × contract 热图，并显示 IRR-CTD vs min-basis-CTD 不一致提示。
 
 ### B2. Phase 5 — 模块 G：风险与持仓分析
 - **依赖**：`futures_oi_rank` parquet（已有 41730 行）+ `basis_signals` DV01 列
@@ -116,3 +113,5 @@
 - ✅ 2026-04-28 — Phase 4 Streamlit MVP（5 tabs）
 - ✅ 2026-04-28 — Phase 2.3 CTD 切换概率（MC + 情景）
 - ✅ 2026-04-28 — Phase 1.3 v1 单券估值（TL 偏差 -490→-129bp）
+- ✅ 2026-04-30 — coupon_frequency 半年付息建模（CF ≤5bp 92.9→94.4%）
+- ✅ 2026-04-30 — B1 Phase 5 模块 E CTD & 交割分析面板

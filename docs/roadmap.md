@@ -113,9 +113,9 @@
 
 **为什么用 Streamlit**：日频场景下，写交互式数据应用只需 React + FastAPI 方案 1/3 的工时。
 
-## Phase 5 — 监控面板完整版 ⛔ next up
+## Phase 5 — 监控面板完整版 1/3 done
 
-- [ ] 模块 E **CTD 与交割分析**（直接展示 `parquet/ctd_switch/`：切换概率 + 6 档情景表）
+- [x] 模块 E **CTD 与交割分析**：`parquet/ctd_switch/` 接入，含切换概率 / 6 档情景表 / 历史时序 / product×contract 热图
 - [ ] 模块 G **风险与持仓分析**（DV01 暴露 + 跨品种集中度热图）
 - [ ] 模块 H **信号告警**（邮件 / 钉钉 / 企微 webhook，触发条件可配置）
 - [ ] sidebar 全局日期 picker / 产品 picker

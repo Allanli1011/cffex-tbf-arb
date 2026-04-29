@@ -56,6 +56,12 @@ def load_curve_signals(start: str | None = None,
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
+def load_ctd_switch(start: str | None = None,
+                    end: str | None = None) -> pd.DataFrame:
+    return _concat("ctd_switch", start=start, end=end)
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_futures_daily(start: str | None = None,
                        end: str | None = None) -> pd.DataFrame:
     return _concat("futures_daily", start=start, end=end)

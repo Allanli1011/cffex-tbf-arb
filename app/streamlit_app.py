@@ -4,12 +4,13 @@ Run with::
 
     streamlit run app/streamlit_app.py
 
-Five tabs:
+Six tabs:
     1. Overview  — latest-day cards across all 4 signal families
     2. Basis     — IRR / net-basis tables + IRR vs FDR007 timeseries
     3. Calendar  — cross-quarter spreads + Z-score timeseries
     4. Curve     — fly + steepener live levels + history
-    5. Backtest  — pick a run, NAV curve, trades, summary metrics
+    5. CTD       — Monte Carlo switch probabilities + scenario table
+    6. Backtest  — pick a run, NAV curve, trades, summary metrics
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from app.data_loaders import (  # noqa: E402
     load_backtest_runs,
     load_basis_signals,
     load_calendar_spreads,
+    load_ctd_switch,
     load_curve_signals,
     load_futures_daily,
     load_repo_rate,
@@ -290,7 +292,140 @@ def render_curve():
     st.plotly_chart(fig2, use_container_width=True)
 
 
-# ---- Tab 5: Backtest ----------------------------------------------------
+# ---- Tab 5: CTD & Delivery ----------------------------------------------
+
+
+SCENARIO_COLS = [
+    "scenario_minus_100", "scenario_minus_50", "scenario_minus_25",
+    "scenario_plus_25", "scenario_plus_50", "scenario_plus_100",
+]
+SCENARIO_LABELS = {
+    "scenario_minus_100": "−100bp",
+    "scenario_minus_50": "−50bp",
+    "scenario_minus_25": "−25bp",
+    "scenario_plus_25": "+25bp",
+    "scenario_plus_50": "+50bp",
+    "scenario_plus_100": "+100bp",
+}
+
+
+def render_ctd_delivery():
+    st.header("CTD switch probabilities")
+    st.caption(
+        "Monte Carlo with parallel yield-shift; horizon vol = "
+        "5 bp/day × √days_to_delivery. Anchor = min-gross-basis CTD."
+    )
+
+    df = load_ctd_switch()
+    if df.empty:
+        st.warning(
+            "No ``ctd_switch`` parquet found. Run "
+            "``python3 scripts/compute_ctd_switch.py`` first."
+        )
+        return
+
+    asof = df["date"].max()
+    today = df[df["date"] == asof].sort_values(
+        ["product", "contract_id"]
+    ).reset_index(drop=True)
+
+    # Live table
+    st.subheader(f"Live — {asof}")
+    display_cols = [
+        "contract_id", "product", "current_ctd_bond", "irr_ctd_bond",
+        "ctd_anchor_disagrees", "days_to_delivery", "horizon_vol_bp",
+        "switch_probability", "top_alt_bond", "top_alt_prob",
+    ]
+    table = today[display_cols].copy()
+    table["switch_probability"] = (
+        table["switch_probability"].astype(float) * 100
+    ).round(1)
+    table["top_alt_prob"] = (
+        table["top_alt_prob"].astype(float) * 100
+    ).round(1)
+    table["horizon_vol_bp"] = table["horizon_vol_bp"].astype(float).round(1)
+    table = table.rename(columns={
+        "current_ctd_bond": "MC anchor (min basis)",
+        "irr_ctd_bond": "IRR-CTD",
+        "ctd_anchor_disagrees": "anchor ≠ IRR-CTD",
+        "days_to_delivery": "days→delivery",
+        "horizon_vol_bp": "horizon vol bp",
+        "switch_probability": "switch prob %",
+        "top_alt_bond": "top alt bond",
+        "top_alt_prob": "top alt prob %",
+    })
+    st.dataframe(table, hide_index=True, use_container_width=True)
+
+    if today["ctd_anchor_disagrees"].any():
+        n = int(today["ctd_anchor_disagrees"].sum())
+        st.info(
+            f"⚠️ {n}/{len(today)} contracts have different CTDs under "
+            "min-basis vs max-IRR ranking — carry differences across "
+            "deliverables are material."
+        )
+
+    # Per-contract drill-down
+    contracts = today["contract_id"].tolist()
+    if not contracts:
+        return
+    sel = st.selectbox("Drill-down contract:", contracts, index=0)
+    row = today[today["contract_id"] == sel].iloc[0]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Switch probability",
+              f"{float(row['switch_probability']) * 100:.1f}%")
+    c2.metric("Days to delivery", f"{int(row['days_to_delivery'])}")
+    c3.metric("Horizon vol", f"{float(row['horizon_vol_bp']):.1f} bp")
+
+    # Scenario table for the selected contract
+    st.subheader(f"{sel} — deterministic scenario table")
+    scen_rows = [
+        {"shift": SCENARIO_LABELS[c],
+         "ctd_bond": str(row[c]),
+         "switched":
+            str(row[c]) != str(row["current_ctd_bond"])}
+        for c in SCENARIO_COLS
+    ]
+    scen_df = pd.DataFrame(scen_rows)
+    scen_df.insert(0, "row",
+                   ["−100", "−50", "−25", "+25", "+50", "+100"])
+    st.dataframe(
+        scen_df.drop(columns=["row"]),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    # History timeseries — switch probability over time for this contract
+    hist = df[df["contract_id"] == sel].sort_values("date")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=hist["date"],
+        y=(hist["switch_probability"].astype(float) * 100).round(1),
+        mode="lines",
+        name="switch prob %",
+    ))
+    fig.update_layout(
+        title=f"{sel} — switch probability history",
+        yaxis_title="%", height=320,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Cross-section heatmap: product × contract switch probability
+    st.subheader("Today's switch probability matrix")
+    pivot = today.pivot(index="product", columns="contract_id",
+                        values="switch_probability").fillna(0.0) * 100
+    fig2 = px.imshow(
+        pivot,
+        text_auto=".1f",
+        color_continuous_scale="Reds",
+        aspect="auto",
+        labels=dict(x="contract", y="product", color="switch %"),
+    )
+    fig2.update_layout(height=300)
+    st.plotly_chart(fig2, use_container_width=True)
+
+
+# ---- Tab 6: Backtest ----------------------------------------------------
 
 
 def render_backtest():
@@ -358,8 +493,9 @@ def main():
         " Data: open-source AKShare + CFFEX scrape."
     )
 
-    tab_overview, tab_basis, tab_cal, tab_curve, tab_bt = st.tabs([
-        "Overview", "Basis", "Calendar", "Curve", "Backtest",
+    (tab_overview, tab_basis, tab_cal, tab_curve, tab_ctd,
+     tab_bt) = st.tabs([
+        "Overview", "Basis", "Calendar", "Curve", "CTD", "Backtest",
     ])
     with tab_overview:
         render_overview()
@@ -369,6 +505,8 @@ def main():
         render_calendar()
     with tab_curve:
         render_curve()
+    with tab_ctd:
+        render_ctd_delivery()
     with tab_bt:
         render_backtest()
 
