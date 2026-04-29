@@ -29,6 +29,8 @@ import streamlit as st  # noqa: E402
 
 from app.data_loaders import (  # noqa: E402
     latest_date,
+    load_backtest_grid_cells,
+    load_backtest_grid_summary,
     load_backtest_run_artifacts,
     load_backtest_runs,
     load_basis_signals,
@@ -481,6 +483,103 @@ def render_backtest():
 
     with st.expander("Params"):
         st.json(info["params"])
+
+    # ---- Grid sweep section ---------------------------------------------
+    st.divider()
+    st.subheader("Parameter sweeps")
+    st.caption(
+        "Grids written by ``scripts/backtest_grid.py``. Sharpes are "
+        "in-sample on a ~144-day window — interpret as "
+        "*directional* signals, not promises of out-of-sample edge."
+    )
+    grid_df = load_backtest_grid_summary()
+    if grid_df.empty:
+        st.info(
+            "No grids in SQLite yet. Run "
+            "``python3 scripts/backtest_grid.py --strategy <name>`` to "
+            "populate."
+        )
+        return
+
+    # Pick the most recent grid per strategy
+    by_strategy = grid_df.sort_values("created_at", ascending=False)\
+        .drop_duplicates("strategy")
+    options = {
+        f"{r['strategy']}  ({r['grid_id']})": (r["strategy"], r["grid_id"])
+        for _, r in by_strategy.iterrows()
+    }
+    sel_label = st.selectbox(
+        "Strategy / grid", list(options),
+        index=0, key="grid_select",
+    )
+    sel_strategy, sel_grid_id = options[sel_label]
+    cells = load_backtest_grid_cells(sel_grid_id)
+    if cells.empty:
+        st.info("Selected grid has no cells.")
+        return
+
+    # Hold-day picker (default = best Sharpe's hold)
+    holds = sorted(cells["max_hold_days"].unique().tolist())
+    best_row = cells.sort_values("sharpe", ascending=False).iloc[0]
+    default_hold_idx = holds.index(int(best_row["max_hold_days"]))
+    hold_pick = st.select_slider(
+        "max_hold_days slice",
+        options=holds, value=int(best_row["max_hold_days"]),
+        key="grid_hold_slice",
+    )
+    sub = cells[cells["max_hold_days"] == hold_pick]
+
+    g1, g2, g3 = st.columns(3)
+    g1.metric("Best Sharpe (this grid)", f"{best_row['sharpe']:+.2f}")
+    g2.metric("Best entry / exit",
+              f"{best_row['entry_param']} / {best_row['exit_param']}")
+    g3.metric("Best hold", f"{int(best_row['max_hold_days'])}d")
+
+    # Sharpe heatmap (entry × exit) at the selected hold
+    pivot_sharpe = sub.pivot(
+        index="entry_param", columns="exit_param", values="sharpe"
+    )
+    fig = px.imshow(
+        pivot_sharpe,
+        text_auto=".2f",
+        color_continuous_scale="RdBu",
+        color_continuous_midpoint=0.0,
+        aspect="auto",
+        labels=dict(x="exit_param", y="entry_param", color="Sharpe"),
+    )
+    fig.update_layout(
+        title=f"Sharpe heatmap @ hold={hold_pick}d  "
+              f"(NaN = exit ≥ entry, skipped)",
+        height=380,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Companion heatmap: number of trades (sanity check on sample size)
+    pivot_n = sub.pivot(
+        index="entry_param", columns="exit_param", values="n_trades"
+    )
+    fig2 = px.imshow(
+        pivot_n,
+        text_auto=".0f",
+        color_continuous_scale="Greys",
+        aspect="auto",
+        labels=dict(x="exit_param", y="entry_param", color="trades"),
+    )
+    fig2.update_layout(
+        title=f"Trade count @ hold={hold_pick}d", height=320,
+    )
+    st.plotly_chart(fig2, use_container_width=True)
+
+    with st.expander("All cells (sorted by Sharpe)"):
+        cells_show = cells.sort_values("sharpe", ascending=False).copy()
+        for col in ("hit_rate",):
+            cells_show[col] = (
+                cells_show[col].astype(float) * 100
+            ).round(1)
+        for col in ("sharpe", "total_pnl", "max_drawdown",
+                    "avg_holding_days"):
+            cells_show[col] = cells_show[col].astype(float).round(2)
+        st.dataframe(cells_show, hide_index=True, use_container_width=True)
 
 
 # ---- App entry ----------------------------------------------------------

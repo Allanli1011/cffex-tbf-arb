@@ -12,7 +12,7 @@
 
 ## P0（高优先级，可立即推进）
 
-> **B1 已完成 2026-04-30** — 见下方"已完成"区。新的 P0 起点：B2 / B3。
+> **B1 + B3 已完成 2026-04-30** — 见下方"已完成"区。新的 P0 起点：B2（Phase 5 模块 G 风险与持仓）。
 
 
 ### ~~B1. Phase 5 — 模块 E：CTD 与交割分析面板~~ ✅ 2026-04-30
@@ -28,12 +28,11 @@
 - **验收**：模块 G tab 可用
 - **预估**：2–3 小时
 
-### B3. Phase 3 — 参数扫描与敏感度分析
-- **依赖**：现有 6 个策略 + `src/backtest/`
-- **新增**：`scripts/backtest_grid.py`，对每个策略在 (entry_z × exit_z × max_hold_days)
-  网格上扫描，每组合一次回测，写 `parquet/backtest_grid/` + SQLite
-- **面板配套**：Backtest tab 加热图（grid_id × Sharpe）
-- **预估**：2 小时
+### ~~B3. Phase 3 — 参数扫描与敏感度分析~~ ✅ 2026-04-30
+完成。`scripts/backtest_grid.py` 对每个策略跑 5×5×5 entry/exit/hold 网格；710 cells / 6 策略
+落盘 `parquet/backtest_grid/` + SQLite `backtest_grid` 表。Backtest tab 加 entry × exit Sharpe
+热图 + trade-count 配套图 + 全 cells 排序表。最高 Sharpe（样本内）：fly_2_5_10 +4.55、
+steepener_5s30s +4.66；规律性发现：更紧入场 (~1.0σ) + 更短持仓 (10-15d) 显著优于 2σ/20d 基线。
 
 ## P1（中优先级）
 
@@ -115,3 +114,4 @@
 - ✅ 2026-04-28 — Phase 1.3 v1 单券估值（TL 偏差 -490→-129bp）
 - ✅ 2026-04-30 — coupon_frequency 半年付息建模（CF ≤5bp 92.9→94.4%）
 - ✅ 2026-04-30 — B1 Phase 5 模块 E CTD & 交割分析面板
+- ✅ 2026-04-30 — B3 Phase 3 参数扫描（5×5×5 网格 / 710 cells / 6 策略）

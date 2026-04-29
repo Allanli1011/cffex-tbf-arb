@@ -26,7 +26,7 @@ frequency. Use system Python 3.9.6 directly, no venv.
 | 2.4 — 跨期价差 + Z-score | ✅ done; 3000 spread rows × 250 days |
 | 2.5 — 期货隐含 yield + DV01 | ✅ done; matches industry typical |
 | 2.6 — 蝶式 / 陡平 (DV01 中性) | ✅ done; 576 curve_signals × 144 days |
-| 3 — 回测框架 | ✅ done; 6 策略（basis / calendar / 4 curve）|
+| 3 — 回测框架 | ✅ done; 6 策略 + 参数扫描网格（710 cells）|
 | 4 — Streamlit MVP 面板 | ✅ done; **6 tabs**（Overview/Basis/Calendar/Curve/CTD/Backtest）|
 | 5 — 完整面板 (8 模块) | 1/3 done（模块 E CTD 已加，G/H 待）|
 | 6 — ML / regime / 流动性评分 / 压测 | ⛔ todo |
@@ -101,6 +101,8 @@ tests/
 | `curve_signals` parquet | 576 / 144 天 | 4 结构 × 144 天，含 60d Z |
 | `backtest_runs` parquet | 6 runs (26 trades + 720 nav rows) | calendar / basis / 4 curve |
 | `backtest_runs` (SQLite) | 6 行 | params + metrics JSON |
+| `backtest_grid` parquet | 6 grids / 710 cells | 5×5×5 entry/exit/hold sweep |
+| `backtest_grid` (SQLite) | 710 行 | 同上，可索引查询 |
 | `ctd_switch` parquet | 1036 / 144 天 | MC switch prob + 6 档情景 |
 
 ## 关键设计决策（已确定，不要再讨论）
@@ -138,6 +140,19 @@ tests/
 | `curve_mr_steepener_5s30s_v1` | 2 | 0% | -24,394 | -1.66 | -35,535 |
 
 注：单合约名义 P&L（curve 策略 P&L 单位 ≈ 1 个 belly/long-tenor 合约的 DV01 × 价差变化）；样本仅 144 天，5s30s 跌惨实属过窄样本，需更长历史。
+
+## 参数扫描最佳 Sharpe（2026-04-30，5×5×5 网格）
+
+| 策略 | Sharpe | entry | exit | hold |
+|---|---|---|---|---|
+| calendar_mr_T_near_far | +2.09 | 2.0σ | 1.0σ | 15d |
+| basis_long_carry_T | +3.21 | 40bp | 10bp | 10d |
+| curve_mr_fly_2_5_10 | **+4.55** | 1.0σ | 0.75σ | 10d |
+| curve_mr_fly_5_10_30 | +4.46 | 1.5σ | 1.0σ | 10d |
+| curve_mr_steepener_2s10s | +4.01 | 1.0σ | 0.75σ | 15d |
+| curve_mr_steepener_5s30s | **+4.66** | 1.5σ | 1.0σ | 10d |
+
+**警告**：样本内最优 + 144 天窗口太短，out-of-sample 必然显著回落。规律性发现：更紧入场 (~1.0–1.5σ) + 更短持仓 (10–15d) 显著优于 2σ/20d 基线，可能反映均值回复速度比预期快。
 
 ## CTD 切换概率（2026-04-24，5bp/d 假设）
 
@@ -186,6 +201,11 @@ python3 scripts/run_backtest.py --strategy calendar_mr_T_near_far
 python3 scripts/run_backtest.py --strategy basis_long_carry_T
 python3 scripts/run_backtest.py --strategy curve_mr_fly_5_10_30
 python3 scripts/run_backtest.py --strategy curve_mr_steepener_2s10s
+
+# 参数扫描（5×5×5 网格 ~ 1 分钟 / 6 策略）
+python3 scripts/backtest_grid.py --strategy basis_long_carry_T
+python3 scripts/backtest_grid.py --strategy calendar_mr_T_near_far \
+    --entry 1.0,1.5,2.0,2.5 --exit 0,0.25,0.5 --hold 10,15,20,30
 
 # 启动 Streamlit MVP 面板（5 个 tab）
 python3 -m streamlit run app/streamlit_app.py

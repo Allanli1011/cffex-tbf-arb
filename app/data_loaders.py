@@ -62,6 +62,37 @@ def load_ctd_switch(start: str | None = None,
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
+def load_backtest_grid_summary() -> pd.DataFrame:
+    """Latest grid_id per strategy + best-Sharpe row, joined from SQLite."""
+    with sqlite_conn() as conn:
+        df = pd.read_sql_query(
+            """SELECT grid_id, strategy, entry_param, exit_param,
+                      max_hold_days, n_trades, hit_rate, total_pnl,
+                      sharpe, max_drawdown, avg_holding_days, created_at
+               FROM backtest_grid
+               ORDER BY created_at DESC""",
+            conn,
+        )
+    return df
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def load_backtest_grid_cells(grid_id: str) -> pd.DataFrame:
+    """All (entry, exit, hold) cells for a single grid_id."""
+    with sqlite_conn() as conn:
+        df = pd.read_sql_query(
+            """SELECT entry_param, exit_param, max_hold_days,
+                      n_trades, hit_rate, total_pnl, sharpe,
+                      max_drawdown, avg_holding_days
+               FROM backtest_grid
+               WHERE grid_id = ?
+               ORDER BY entry_param, exit_param, max_hold_days""",
+            conn, params=(grid_id,),
+        )
+    return df
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_futures_daily(start: str | None = None,
                        end: str | None = None) -> pd.DataFrame:
     return _concat("futures_daily", start=start, end=end)

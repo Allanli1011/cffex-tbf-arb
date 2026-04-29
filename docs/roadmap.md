@@ -85,7 +85,7 @@
 - [x] 绩效指标：Sharpe（年化×√252）/ MaxDD / 胜率 / 平均持仓天数（`src/backtest/metrics.py`）
 - [x] CLI：`scripts/run_backtest.py --strategy <name>`，写 trades + nav parquet + SQLite
       `backtest_runs` 表
-- [ ] **参数扫描与敏感度分析**（z 阈值 × 持仓期网格）
+- [x] **参数扫描与敏感度分析**：`scripts/backtest_grid.py` 跑 entry × exit × hold 网格，710 cells × 6 策略；面板 Backtest tab 加 Sharpe 热图
 
 **已跑 6 个 baseline run**（144 天样本，单合约名义 P&L，RMB）：
 

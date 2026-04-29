@@ -40,6 +40,7 @@ PARQUET_DATASETS = {
     "curve_signals": PARQUET_ROOT / "curve_signals",        # butterfly / steepener
     "backtest_runs": PARQUET_ROOT / "backtest_runs",        # per-run trades + nav
     "ctd_switch": PARQUET_ROOT / "ctd_switch",              # per-(date,contract) CTD MC
+    "backtest_grid": PARQUET_ROOT / "backtest_grid",        # per-grid parameter sweep
 }
 
 # Raw CSV archive — one file per day, never overwritten. Audit trail for
@@ -144,6 +145,22 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
     params_json TEXT,
     metrics_json TEXT,
     created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS backtest_grid (
+    grid_id      TEXT NOT NULL,        -- shared id for all cells of one sweep
+    strategy     TEXT NOT NULL,
+    entry_param  REAL NOT NULL,        -- entry_z OR entry_bp
+    exit_param   REAL NOT NULL,        -- exit_z OR exit_bp
+    max_hold_days INTEGER NOT NULL,
+    n_trades     INTEGER NOT NULL,
+    hit_rate     REAL,
+    total_pnl    REAL,
+    sharpe       REAL,
+    max_drawdown REAL,
+    avg_holding_days REAL,
+    created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (grid_id, entry_param, exit_param, max_hold_days)
 );
 
 CREATE TABLE IF NOT EXISTS etl_runs (

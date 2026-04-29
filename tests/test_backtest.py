@@ -187,3 +187,82 @@ def test_curve_runner_returns_three_part_tuple():
     assert params["contract_size"] == CURVE_CONTRACT_SIZE[structure]
     if not nav.empty:
         assert "cum_pnl" in nav.columns
+
+
+# ---- Grid sweep ---------------------------------------------------------
+
+
+def test_grid_runner_param_inference():
+    """The grid runner should detect entry_z vs entry_bp kwargs from the
+    underlying registry runner's signature."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts.backtest_grid import _runner_param_names
+
+    e_z, x_z = _runner_param_names("calendar_mr_T_near_far")
+    assert (e_z, x_z) == ("entry_z", "exit_z")
+    e_bp, x_bp = _runner_param_names("basis_long_carry_T")
+    assert (e_bp, x_bp) == ("entry_bp", "exit_bp")
+    e_curve, x_curve = _runner_param_names("curve_mr_fly_5_10_30")
+    assert (e_curve, x_curve) == ("entry_z", "exit_z")
+
+
+def test_grid_run_skips_invalid_cells():
+    """``exit >= entry`` cells should be skipped (no edge to fade)."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts.backtest_grid import run_grid
+
+    df = run_grid(
+        strategy="calendar_mr_T_near_far",
+        entry_grid=(1.5, 2.0),
+        exit_grid=(0.0, 1.5),   # 1.5 >= 1.5 entry: skip; 0 < 1.5: keep
+        hold_grid=(20,),
+    )
+    # Cells: (1.5, 0, 20) ✓, (1.5, 1.5, 20) ✗,
+    #        (2.0, 0, 20) ✓, (2.0, 1.5, 20) ✓ → 3 cells
+    assert len(df) == 3
+    assert (df["exit_param"] < df["entry_param"]).all()
+    # Required metric columns
+    for col in ("sharpe", "n_trades", "hit_rate", "total_pnl"):
+        assert col in df.columns
+
+
+def test_grid_persist_writes_parquet_and_sqlite(tmp_path, monkeypatch):
+    """End-to-end: a tiny grid should land in parquet AND the SQLite table."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts import backtest_grid as bg
+    from src.data import storage
+
+    monkeypatch.setattr(storage, "SQLITE_PATH",
+                        tmp_path / "test_meta.db")
+    monkeypatch.setattr(storage, "DATA_ROOT", tmp_path / "data")
+    monkeypatch.setattr(storage, "PARQUET_ROOT", tmp_path / "data" / "parquet")
+    monkeypatch.setitem(
+        storage.PARQUET_DATASETS, "backtest_grid",
+        tmp_path / "data" / "parquet" / "backtest_grid",
+    )
+    storage.init_schema()
+
+    df = bg.run_grid(
+        strategy="calendar_mr_T_near_far",
+        entry_grid=(2.0,),
+        exit_grid=(0.5,),
+        hold_grid=(20,),
+    )
+    assert len(df) == 1
+
+    grid_id = "grid_test_abc"
+    path = bg._persist(grid_id, "calendar_mr_T_near_far", df)
+    assert path.exists()
+    # And SQLite has the row too
+    with storage.sqlite_conn() as conn:
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM backtest_grid WHERE grid_id = ?",
+            (grid_id,),
+        ).fetchone()
+    assert rows[0] == 1
