@@ -99,7 +99,7 @@ def _load_inputs(
         cfs = pd.read_sql_query(
             """
             SELECT cf.contract_id, cf.bond_code, cf.cf,
-                   b.bond_name, b.coupon_rate, b.maturity_date
+                   b.bond_name, b.coupon_rate, b.coupon_frequency, b.maturity_date
             FROM conversion_factors cf
             LEFT JOIN bonds b ON cf.bond_code = b.bond_code
             """,
@@ -167,8 +167,9 @@ def _compute_for_date(date: str) -> pd.DataFrame:
         product = (r.contract_id[:2] if r.contract_id[:2] in {"TS", "TF", "TL"}
                    else r.contract_id[0])
         try:
+            freq = int(r.coupon_frequency) if pd.notna(r.coupon_frequency) else 1
             pricing = price_from_yield(
-                float(r.coupon_rate), maturity, valuation, ytm
+                float(r.coupon_rate), maturity, valuation, ytm, coupon_frequency=freq
             )
             futures_settle = float(f_by_contract[r.contract_id])
             quote = compute_basis(
@@ -179,6 +180,7 @@ def _compute_for_date(date: str) -> pd.DataFrame:
                 maturity=maturity,
                 futures=futures_settle,
                 cf=float(r.cf),
+                coupon_frequency=freq,
             )
             implied_ytm = implied_ytm_from_futures(
                 futures_price=futures_settle,
@@ -186,6 +188,7 @@ def _compute_for_date(date: str) -> pd.DataFrame:
                 coupon_rate=float(r.coupon_rate),
                 maturity=maturity,
                 valuation_date=valuation,
+                coupon_frequency=freq,
             )
             dv01 = futures_dv01(
                 futures_price=futures_settle,
@@ -195,6 +198,7 @@ def _compute_for_date(date: str) -> pd.DataFrame:
                 valuation_date=valuation,
                 product=product,
                 implied_ytm=implied_ytm,
+                coupon_frequency=freq,
             )
         except Exception:  # noqa: BLE001 - skip bad rows, keep going
             continue

@@ -44,7 +44,7 @@ def load_cf_with_bond() -> pd.DataFrame:
         df = pd.read_sql_query(
             """
             SELECT cf.contract_id, cf.bond_code, cf.cf AS cf_published,
-                   b.bond_name, b.coupon_rate, b.maturity_date
+                   b.bond_name, b.coupon_rate, b.coupon_frequency, b.maturity_date
             FROM conversion_factors cf
             LEFT JOIN bonds b ON cf.bond_code = b.bond_code
             ORDER BY cf.contract_id, cf.bond_code
@@ -65,10 +65,12 @@ def recompute(row: pd.Series) -> tuple[float | None, str | None]:
     try:
         _, delivery = parse_contract_id(row.contract_id)
         maturity = dt.date.fromisoformat(row.maturity_date)
+        freq = int(row.coupon_frequency) if pd.notna(row.coupon_frequency) else 1
         out = compute_cf(CFInputs(
             coupon_rate=float(row.coupon_rate),
             maturity=maturity,
             delivery_month_start=delivery,
+            coupon_frequency=freq,
         ))
         return out.cf, None
     except Exception as exc:  # noqa: BLE001

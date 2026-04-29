@@ -311,12 +311,17 @@ def _extract_rows_from_html_table(table, ref: AnnouncementRef) -> list[CFRow]:
 
 
 def _pct_to_float(s: str) -> float | None:
+    """Parse a CFFEX coupon quote into decimal form.
+
+    CFFEX always quotes coupons in percent (e.g. ``2.35`` or ``2.35%``),
+    so we unconditionally divide by 100. ``None`` is returned for
+    unparseable input.
+    """
     s = s.strip().replace("%", "")
     try:
-        v = float(s)
+        return float(s) / 100.0
     except ValueError:
         return None
-    return v / 100 if v > 1 else v
 
 
 # ---------------------------------------------------------------------

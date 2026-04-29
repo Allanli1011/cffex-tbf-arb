@@ -37,7 +37,7 @@ import datetime as dt
 from dataclasses import dataclass
 
 from .accrued import compute_accrued
-from .cf_calculator import _to_date
+from .cf_calculator import _to_date, next_coupon_date
 
 
 @dataclass(frozen=True)
@@ -65,28 +65,23 @@ def coupons_received_in_window(
     end: dt.date,
     *,
     face: float = 100.0,
+    coupon_frequency: int = 1,
 ) -> tuple[float, list[dt.date]]:
     """Sum of coupons strictly between ``start`` (exclusive) and ``end``
-    (inclusive). For an annual-coupon bond this is at most one coupon
-    over a typical futures window.
+    (inclusive).
     """
     if end < start:
         raise ValueError("end must be on or after start")
     coupons: list[dt.date] = []
-    year = start.year
-    coupon_amt = coupon_rate * face
-    while True:
-        try:
-            d = maturity.replace(year=year)
-        except ValueError:  # Feb 29 -> Feb 28 fallback
-            d = maturity.replace(year=year, day=28)
-        if d > end:
-            break
-        if d > start:
+    coupon_amt = (coupon_rate / coupon_frequency) * face
+    
+    # Start looking for coupons after 'start'
+    d = next_coupon_date(maturity, start + dt.timedelta(days=1), coupon_frequency)
+    while d <= end:
+        if d <= maturity:  # don't collect coupons after maturity
             coupons.append(d)
-        year += 1
-        if year > end.year + 1:
-            break
+        d = next_coupon_date(maturity, d + dt.timedelta(days=1), coupon_frequency)
+        
     return coupon_amt * len(coupons), coupons
 
 
@@ -100,6 +95,7 @@ def compute_basis(
     futures: float,
     cf: float,
     face: float = 100.0,
+    coupon_frequency: int = 1,
 ) -> BasisQuote:
     """Compute basis / carry / IRR for a (futures, bond) pair.
 
@@ -117,13 +113,13 @@ def compute_basis(
         )
 
     accrued_now = compute_accrued(
-        coupon_rate, maturity_d, valuation, face=face
+        coupon_rate, maturity_d, valuation, face=face, coupon_frequency=coupon_frequency
     ).accrued
     accrued_at_delivery = compute_accrued(
-        coupon_rate, maturity_d, delivery, face=face
+        coupon_rate, maturity_d, delivery, face=face, coupon_frequency=coupon_frequency
     ).accrued
     coupons_during, _ = coupons_received_in_window(
-        coupon_rate, maturity_d, valuation, delivery, face=face
+        coupon_rate, maturity_d, valuation, delivery, face=face, coupon_frequency=coupon_frequency
     )
 
     invoice = futures * cf + accrued_at_delivery

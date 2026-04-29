@@ -112,6 +112,7 @@ def parse_deliverable_csv(raw: bytes, source_url: str = CFFEX_DELIVERABLE_BOND_C
             sh_code=_clean(r.sh_code),
             sz_code=_clean(r.sz_code),
             coupon_rate=_pct_to_decimal(r.coupon_pct),
+            coupon_frequency=2 if r.product.strip() in ("T", "TL") else 1,
             maturity_date=_yyyymmdd_to_date(r.maturity_yyyymmdd),
         )
         cf_row = CFRow(

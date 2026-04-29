@@ -26,7 +26,7 @@ import datetime as dt
 from dataclasses import dataclass
 
 from .accrued import compute_accrued, previous_coupon_date
-from .cf_calculator import _safe_replace_year, _to_date
+from .cf_calculator import _safe_replace_year, _to_date, next_coupon_date
 
 
 @dataclass(frozen=True)
@@ -39,18 +39,14 @@ class BondPricing:
     convexity: float
 
 
-def _coupon_dates_after(maturity: dt.date, after: dt.date) -> list[dt.date]:
+def _coupon_dates_after(maturity: dt.date, after: dt.date, coupon_frequency: int = 1) -> list[dt.date]:
     """Return all coupon dates strictly after ``after``, up to and
     including maturity."""
     out: list[dt.date] = []
-    year = after.year
-    while True:
-        d = _safe_replace_year(maturity, year)
-        if d > after and d <= maturity:
-            out.append(d)
-        if d >= maturity:
-            break
-        year += 1
+    d = next_coupon_date(maturity, after + dt.timedelta(days=1), coupon_frequency)
+    while d <= maturity:
+        out.append(d)
+        d = next_coupon_date(maturity, d + dt.timedelta(days=1), coupon_frequency)
     # Ensure maturity is included (handles edge of leap-day fallback)
     if maturity not in out:
         out.append(maturity)
@@ -64,6 +60,7 @@ def price_from_yield(
     yield_decimal: float,
     *,
     face: float = 100.0,
+    coupon_frequency: int = 1,
 ) -> BondPricing:
     """Price an annual-coupon bond from its YTM.
 
@@ -78,8 +75,8 @@ def price_from_yield(
         )
 
     cashflows: list[tuple[dt.date, float]] = []
-    coupon_amt = coupon_rate * face
-    for d in _coupon_dates_after(maturity, valuation):
+    coupon_amt = (coupon_rate / coupon_frequency) * face
+    for d in _coupon_dates_after(maturity, valuation, coupon_frequency):
         cf = coupon_amt + (face if d == maturity else 0.0)
         cashflows.append((d, cf))
 
@@ -101,7 +98,7 @@ def price_from_yield(
     modified = macaulay / (1.0 + yield_decimal)
     convexity = convex_t2 / (pv_total * (1.0 + yield_decimal) ** 2) if pv_total else 0.0
 
-    accrued = compute_accrued(coupon_rate, maturity, valuation, face=face).accrued
+    accrued = compute_accrued(coupon_rate, maturity, valuation, face=face, coupon_frequency=coupon_frequency).accrued
     return BondPricing(
         clean=pv_total - accrued,
         dirty=pv_total,
@@ -121,15 +118,16 @@ def yield_from_price(
     face: float = 100.0,
     tol: float = 1e-8,
     max_iter: int = 100,
+    coupon_frequency: int = 1,
 ) -> float:
     """Solve for YTM given a clean price using bisection."""
     target_dirty = clean_price + compute_accrued(
-        coupon_rate, maturity, valuation_date, face=face
+        coupon_rate, maturity, valuation_date, face=face, coupon_frequency=coupon_frequency
     ).accrued
 
     def dirty_at(y: float) -> float:
         return price_from_yield(
-            coupon_rate, maturity, valuation_date, y, face=face
+            coupon_rate, maturity, valuation_date, y, face=face, coupon_frequency=coupon_frequency
         ).dirty
 
     # Yields below -10% would imply absurd prices; above 50% likewise unrealistic
@@ -165,6 +163,7 @@ def implied_ytm_from_futures(
     maturity: str | dt.date,
     valuation_date: str | dt.date,
     face: float = 100.0,
+    coupon_frequency: int = 1,
 ) -> float:
     """Yield-to-maturity that would price the deliverable bond at exactly
     ``futures_price * cf`` (per 100 face) on ``valuation_date``.
@@ -180,6 +179,7 @@ def implied_ytm_from_futures(
         valuation_date=valuation_date,
         clean_price=target_clean,
         face=face,
+        coupon_frequency=coupon_frequency,
     )
 
 
@@ -200,6 +200,7 @@ def futures_dv01(
     valuation_date: str | dt.date,
     product: str,
     implied_ytm: float | None = None,
+    coupon_frequency: int = 1,
 ) -> FuturesDV01:
     """DV01 of a TBF contract via the CTD bond.
 
@@ -222,8 +223,9 @@ def futures_dv01(
             coupon_rate=coupon_rate,
             maturity=maturity,
             valuation_date=valuation_date,
+            coupon_frequency=coupon_frequency,
         )
-    pr = price_from_yield(coupon_rate, maturity, valuation_date, implied_ytm)
+    pr = price_from_yield(coupon_rate, maturity, valuation_date, implied_ytm, coupon_frequency=coupon_frequency)
     bp = 1e-4
     # ΔClean (per 100 face) for +1bp = -clean * mod_dur * 1bp
     d_clean = -pr.clean * pr.modified_dur * bp

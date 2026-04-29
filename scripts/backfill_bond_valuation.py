@@ -52,7 +52,7 @@ def _load_bond_pool() -> pd.DataFrame:
         df = pd.read_sql_query(
             """
             SELECT DISTINCT b.bond_code, b.sh_code, b.coupon_rate,
-                            b.maturity_date
+                            b.coupon_frequency, b.maturity_date
             FROM bonds b
             INNER JOIN conversion_factors cf ON cf.bond_code = b.bond_code
             WHERE b.sh_code IS NOT NULL AND b.sh_code != ''
@@ -65,9 +65,9 @@ def _load_bond_pool() -> pd.DataFrame:
 
 
 def _solve_ytm(coupon: float, maturity: str, valuation_date: str,
-               clean: float) -> float | None:
+               clean: float, freq: int = 1) -> float | None:
     try:
-        return yield_from_price(coupon, maturity, valuation_date, clean)
+        return yield_from_price(coupon, maturity, valuation_date, clean, coupon_frequency=freq)
     except (ValueError, RuntimeError):
         return None
 
@@ -114,11 +114,13 @@ def main(argv: list[str] | None = None) -> int:
             hist = hist[hist["date"] <= args.end]
 
         for _, h in hist.iterrows():
+            freq = int(b.coupon_frequency) if pd.notna(b.coupon_frequency) else 1
             ytm = _solve_ytm(
                 float(b.coupon_rate),
                 str(b.maturity_date),
                 str(h["date"]),
                 float(h["close"]),
+                freq
             )
             if ytm is None:
                 continue

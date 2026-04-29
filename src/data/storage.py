@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS bonds (
     sh_code        TEXT,                     -- 上交所代码
     sz_code        TEXT,                     -- 深交所代码
     coupon_rate    REAL,                     -- 票面利率（小数，0.0235 = 2.35%）
+    coupon_frequency INTEGER DEFAULT 1,      -- 每年付息次数，1 或 2
     maturity_date  TEXT,                     -- YYYY-MM-DD
     updated_at     TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -162,3 +163,7 @@ def init_schema() -> None:
     ensure_layout()
     with sqlite_conn() as conn:
         conn.executescript(SCHEMA_SQL)
+        try:
+            conn.execute("ALTER TABLE bonds ADD COLUMN coupon_frequency INTEGER DEFAULT 1")
+        except sqlite3.OperationalError:
+            pass  # column exists

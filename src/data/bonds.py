@@ -23,6 +23,7 @@ class Bond:
     sh_code: str | None = None
     sz_code: str | None = None
     coupon_rate: float | None = None
+    coupon_frequency: int = 1
     maturity_date: str | None = None  # YYYY-MM-DD
 
 
@@ -30,7 +31,7 @@ def get_bond(bond_code: str) -> Bond | None:
     with sqlite_conn() as conn:
         row = conn.execute(
             """SELECT bond_code, bond_name, sh_code, sz_code,
-                      coupon_rate, maturity_date
+                      coupon_rate, coupon_frequency, maturity_date
                FROM bonds WHERE bond_code = ?""",
             (bond_code,),
         ).fetchone()
@@ -51,14 +52,15 @@ def upsert_bond(bond: Bond) -> str:
         with sqlite_conn() as conn:
             conn.execute(
                 """INSERT INTO bonds(bond_code, bond_name, sh_code, sz_code,
-                                     coupon_rate, maturity_date)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                                     coupon_rate, coupon_frequency, maturity_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     bond.bond_code,
                     bond.bond_name,
                     bond.sh_code,
                     bond.sz_code,
                     bond.coupon_rate,
+                    bond.coupon_frequency,
                     bond.maturity_date,
                 ),
             )
@@ -68,7 +70,7 @@ def upsert_bond(bond: Bond) -> str:
         return "unchanged"
 
     # Detect non-trivial mutations (coupon or maturity) which would be alarming.
-    for field in ("coupon_rate", "maturity_date"):
+    for field in ("coupon_rate", "coupon_frequency", "maturity_date"):
         old, new = getattr(existing, field), getattr(bond, field)
         if old is not None and new is not None and old != new:
             logger.warning(
@@ -79,7 +81,7 @@ def upsert_bond(bond: Bond) -> str:
         conn.execute(
             """UPDATE bonds
                SET bond_name=?, sh_code=?, sz_code=?,
-                   coupon_rate=?, maturity_date=?,
+                   coupon_rate=?, coupon_frequency=?, maturity_date=?,
                    updated_at=CURRENT_TIMESTAMP
                WHERE bond_code=?""",
             (
@@ -87,6 +89,7 @@ def upsert_bond(bond: Bond) -> str:
                 bond.sh_code,
                 bond.sz_code,
                 bond.coupon_rate,
+                bond.coupon_frequency,
                 bond.maturity_date,
                 bond.bond_code,
             ),

@@ -33,17 +33,45 @@ class AccruedBreakdown:
     day_count: str
 
 
-def previous_coupon_date(maturity: dt.date, before_or_on: dt.date) -> dt.date:
+def previous_coupon_date(maturity: dt.date, before_or_on: dt.date, coupon_frequency: int = 1) -> dt.date:
     """Most recent coupon date on or before ``before_or_on``.
 
-    Coupons fall on the maturity MM-DD each year. If ``before_or_on``
-    happens to BE a coupon date, that date is returned.
+    Coupons fall on the maturity MM-DD each year, or also 6 months apart if semi-annual.
     """
+    if coupon_frequency not in (1, 2):
+        raise ValueError(f"Unsupported coupon_frequency {coupon_frequency}")
+        
     year = before_or_on.year
-    candidate = _safe_replace_year(maturity, year)
-    if candidate > before_or_on:
-        candidate = _safe_replace_year(maturity, year - 1)
-    return candidate
+    candidates = []
+    candidates.append(_safe_replace_year(maturity, year - 1))
+    candidates.append(_safe_replace_year(maturity, year))
+    candidates.append(_safe_replace_year(maturity, year + 1))
+    
+    if coupon_frequency == 2:
+        def _add_6_months(d: dt.date) -> dt.date:
+            m = d.month + 6
+            y = d.year
+            if m > 12:
+                m -= 12
+                y += 1
+            try:
+                return dt.date(y, m, d.day)
+            except ValueError:
+                if m == 2:
+                    is_leap = y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)
+                    return dt.date(y, m, 29 if is_leap else 28)
+                elif d.day == 31 and m in (4, 6, 9, 11):
+                    return dt.date(y, m, 30)
+                raise
+                
+        semi_candidates = [_add_6_months(c) for c in candidates]
+        candidates.extend(semi_candidates)
+        
+    candidates.sort(reverse=True)
+    for candidate in candidates:
+        if candidate <= before_or_on:
+            return candidate
+    return candidates[-1]
 
 
 def compute_accrued(
@@ -53,8 +81,9 @@ def compute_accrued(
     *,
     day_count: str = DEFAULT_DAY_COUNT,
     face: float = 100.0,
+    coupon_frequency: int = 1,
 ) -> AccruedBreakdown:
-    """Compute accrued interest for a Chinese annual-coupon treasury.
+    """Compute accrued interest for a Chinese treasury.
 
     Parameters
     ----------
@@ -68,6 +97,8 @@ def compute_accrued(
         ``ACT/ACT`` (default) or ``ACT/365``.
     face:
         Face value scale; accrued is returned per ``face`` units.
+    coupon_frequency:
+        1 for annual, 2 for semi-annual.
     """
     if day_count not in SUPPORTED_DAY_COUNTS:
         raise ValueError(
@@ -82,10 +113,13 @@ def compute_accrued(
             f"Valuation date {valuation} is after maturity {maturity}"
         )
 
-    prev = previous_coupon_date(maturity, valuation)
-    nxt = next_coupon_date(maturity, valuation)
+    prev = previous_coupon_date(maturity, valuation, coupon_frequency)
+    nxt = next_coupon_date(maturity, valuation, coupon_frequency)
     if nxt <= prev:  # safety: e.g. valuation on coupon date
-        nxt = _safe_replace_year(maturity, prev.year + 1)
+        # if valuation is on coupon date, next_coupon_date returns the exact same date!
+        # wait, next_coupon_date says "on or after". So it returns the same date.
+        # But for accrued, we need the strictly *next* coupon date for the period.
+        nxt = next_coupon_date(maturity, valuation + dt.timedelta(days=1), coupon_frequency)
 
     days_accrued = (valuation - prev).days
     period_days = (nxt - prev).days
@@ -95,7 +129,16 @@ def compute_accrued(
     else:  # ACT/365
         ratio = days_accrued / 365
 
-    accrued = coupon_rate * face * ratio
+    # ACT/ACT standard says we divide the annual coupon by frequency
+    # then multiply by (days_accrued / period_days). Wait, is that right?
+    # Yes, for semi-annual, it's (c/2) * (days_accrued / period_days).
+    # This is algebraically the same as c * (days_accrued / (frequency * period_days)).
+    if day_count == "ACT/ACT":
+        accrued = (coupon_rate / coupon_frequency) * face * ratio
+    else:
+        # for ACT/365, ratio is days/365, so accrued is just c * days / 365
+        accrued = coupon_rate * face * ratio
+
     return AccruedBreakdown(
         accrued=accrued,
         last_coupon=prev,
@@ -110,9 +153,10 @@ def compute_accrued_simple(
     coupon_rate: float,
     maturity: str | dt.date,
     valuation_date: str | dt.date,
+    coupon_frequency: int = 1,
 ) -> float:
     """Convenience wrapper returning just the accrued figure (per 100 face)."""
-    return compute_accrued(coupon_rate, maturity, valuation_date).accrued
+    return compute_accrued(coupon_rate, maturity, valuation_date, coupon_frequency=coupon_frequency).accrued
 
 
 def dirty_to_clean(dirty_price: float, accrued: float) -> float:

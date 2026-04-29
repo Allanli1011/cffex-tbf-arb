@@ -1,8 +1,9 @@
 # Project Status
 
-> Last updated: 2026-04-28 (Phase 1.3 v1 + 2.3 + 3 + 4 done). Read this
-> first when resuming work in a new session — it captures everything
-> needed to pick up without re-reading the conversation history.
+> Last updated: 2026-04-30 (Phase 1.3 v1 + 2.3 + 3 + 4 done; coupon
+> frequency fix applied across pricing engine). Read this first when
+> resuming work in a new session — it captures everything needed to
+> pick up without re-reading the conversation history.
 
 ## Constraint
 
@@ -107,7 +108,8 @@ tests/
 1. **CF 表 append-only** — `(contract, bond)` 一旦写入永不修改；冲突即报错而非覆盖。
 2. **Wayback 2024-08-16 快照已锁住 5+ 年历史** — 缺口仅 T2506-T2603 等 16 合约，留待用公式补。
 3. **单券估值（v1）已接入** — Phase 1.3 完成。Sina 交易所日收盘 → ``yield_from_price`` 解 YTM，写 ``bond_valuation`` parquet；``compute_basis_signals`` 优先用单券 YTM，缺数据则 fallback par 曲线。覆盖：50% 行 (5587/11079)，TL 68% / TS 48% / T 46% / TF 30%。**TL bias 从 -490bp → -129bp（74% 修复）**；剩余 -129bp 来自老券交易所稀疏 + 交易所/银行间价差。CCDC 官方付息估值仍需付费接入。
-4. **CF 公式精度** — 92.9% 在 5bp 以内，公式实现正确；个别 outlier 是中途加入交割池的特殊券（T1809/180020 47bp），不调公式。
+4. **CF 公式精度** — **94.4% 在 5bp 以内**（2026-04-30 加入半年付息后从 92.9% 提升）；公式实现正确；个别 outlier 是中途加入交割池的特殊券（T1809/180020 47bp），不调公式。
+9. **半年付息（coupon_frequency）已建模** — Chinese gov bonds: 1y/3y/5y/7y → annual；10y/30y/50y → semi-annual。`bonds.coupon_frequency` 列 + `compute_cf` / `price_from_yield` / `compute_basis` 全链路支持 f=2。198 个债按"原始期限 ≥10y → f=2"自动派生（122 annual + 76 semi-annual）。
 5. **GC001/GC014 历史回填留缺** — 本机 eastmoney 代理拦截，GC007 已完整。
 6. **CFETS 接口按月切片** — `repo_rate_hist` 跨月偶发返回单行，已分月拉取。
 7. **CCDC 收益率曲线 < 1 年限制** — `_process_yield_curve` 自动 330 天分段。
@@ -157,23 +159,15 @@ tests/
 **注**：MC 锚点为 *min-gross-basis*；basis_signals 的 ``is_ctd`` 是 max-IRR。
 **40.8%** 的 (date, contract) 行两套定义不一致（``ctd_anchor_disagrees``），说明 carry 差异对 CTD 排序影响实质性。
 
-## 下一步：补完 + 加深
+## 下一步：见 `docs/BACKLOG.md`
 
-**A. 收尾（roadmap 列出但未做）**
-- Phase 1.4 — GC001/GC014 历史回填（eastmoney 节流，仅 GC007 完整 252 天）
-- Phase 1.2 — CF 季度 cron / launchd（代码就绪，定时未设）
-- Phase 3 — 参数扫描与敏感度分析（z 阈值、持仓周期网格）
+`BACKLOG.md` 是单一信源，按 P0/P1/P2 优先级排序所有未完成任务。最高优先级（P0）：
 
-**B. 加深信号（已声明但未实现）**
-- ✅ Phase 2.3 — CTD 切换概率
-- ✅ Phase 1.3 v1 — 单券估值 Sina 交易所方案（TL 偏差 -490→-129bp）
-- ⛔ Phase 1.3 v2（可选）— 接 CCDC 付费估值或 chinabond.com.cn 公开接口扫描，剩余 -129bp 残差
+1. **B1** Phase 5 模块 E — CTD 与交割分析面板（数据已有，1–2 h）
+2. **B2** Phase 5 模块 G — 风险与持仓分析（2–3 h）
+3. **B3** Phase 3 — 参数扫描与敏感度分析（2 h）
 
-**C. 加宽面板（Phase 5/6）**
-- Phase 5：模块 E CTD 与交割 / 模块 G 持仓与风险 / 模块 H 信号告警 webhook
-- Phase 6：ML 信号、regime 分类、流动性评分、压力测试场景库
-
-**建议顺序**：~~Phase 2.3~~ → ~~Phase 1.3 v1~~ → Phase 5 → Phase 6。
+完整阶段视图（含历史）：`docs/roadmap.md`。
 
 ## 常用命令
 
