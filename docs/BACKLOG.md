@@ -121,3 +121,4 @@ sina 历史可回溯到 2016-11。``repo_rate`` 从 15 序列升至 17 序列。
 - ✅ 2026-04-30 — B5 Phase 1.4 GC001/014 完整回填（sina 路径替代 eastmoney）
 - ✅ 2026-04-30 — B7 面板小改进（sidebar as-of / ETL 健康卡 / ytm_source 列）
 - ✅ 2026-04-30 — B6 Phase 1.2 CF 季度 LaunchAgent 安装脚本
+- ✅ 2026-04-30 — 日终 ETL 自动化：``run_daily_etl.sh`` wrapper + ``daily_digest.py`` actionable 信号 + ``install_launchd.sh daily-etl``（工作日 17:30 跑全 pipeline）

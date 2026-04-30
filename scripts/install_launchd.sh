@@ -1,53 +1,54 @@
 #!/usr/bin/env bash
-# Generate / install / uninstall the macOS LaunchAgent that runs
-# ``populate_contracts.py --snapshot`` on the first day of each quarter
-# at 17:00 local time.
+# Install / uninstall macOS LaunchAgents that automate this project.
+#
+# Two jobs are supported:
+#
+#   cf-refresh   Quarterly: runs ``populate_contracts.py --snapshot`` on
+#                Mar/Jun/Sep/Dec 1 at 17:00 to capture the new listed
+#                contract's CFs.
+#   daily-etl    Daily Mon–Fri at 17:30: runs ``run_daily_etl.sh``,
+#                which sequences the full ETL + signal compute + digest
+#                pipeline.
 #
 # Usage:
-#   ./scripts/install_launchd.sh              # print the plist to stdout (dry run)
-#   ./scripts/install_launchd.sh --install    # write to ~/Library/LaunchAgents and load
-#   ./scripts/install_launchd.sh --uninstall  # unload and remove the plist
-#   ./scripts/install_launchd.sh --status     # show current status
+#   ./scripts/install_launchd.sh [JOB] [ACTION]
 #
-# CFFEX publishes a fresh CF table for the next listed contract roughly
-# at the start of each quarter, so we run on Mar 1 / Jun 1 / Sep 1 / Dec 1.
-# If the machine is asleep at 17:00 launchd will run it on next wake.
+# JOB     = cf-refresh | daily-etl   (or empty to list both)
+# ACTION  = --print (default) | --install | --uninstall | --status
+#
+# Defaults to dry-run (print plist) so a stray invocation never silently
+# loads anything.
 set -euo pipefail
 
-LABEL="com.cffex.cf-refresh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PYTHON_BIN="$(command -v python3 || echo /usr/bin/python3)"
-PLIST_INSTALL_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="$REPO_ROOT/data/logs"
+LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 
-generate_plist() {
-  cat <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${LABEL}</string>
+# ---- Per-job configuration ----------------------------------------------
 
-  <key>ProgramArguments</key>
-  <array>
-    <string>${PYTHON_BIN}</string>
-    <string>${REPO_ROOT}/scripts/populate_contracts.py</string>
-    <string>--snapshot</string>
-  </array>
+job_label() {
+  case "$1" in
+    cf-refresh) echo "com.cffex.cf-refresh" ;;
+    daily-etl)  echo "com.cffex.daily-etl" ;;
+    *) return 1 ;;
+  esac
+}
 
-  <key>WorkingDirectory</key>
-  <string>${REPO_ROOT}</string>
+job_plist_path() {
+  local label
+  label="$(job_label "$1")"
+  echo "$LAUNCH_AGENTS_DIR/${label}.plist"
+}
 
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
-  </dict>
-
-  <key>StartCalendarInterval</key>
-  <array>
+# Echo the schedule fragment (a sequence of <dict> entries inside a
+# StartCalendarInterval array). Quarterly: 4 dates; daily-etl: 5
+# weekday entries.
+job_schedule_xml() {
+  case "$1" in
+    cf-refresh)
+      cat <<EOF
     <dict>
       <key>Month</key><integer>3</integer>
       <key>Day</key><integer>1</integer>
@@ -72,82 +73,191 @@ generate_plist() {
       <key>Hour</key><integer>17</integer>
       <key>Minute</key><integer>0</integer>
     </dict>
+EOF
+      ;;
+    daily-etl)
+      # Mon=1 ... Fri=5 (Sun=0 in launchd convention)
+      for wd in 1 2 3 4 5; do
+        cat <<EOF
+    <dict>
+      <key>Weekday</key><integer>${wd}</integer>
+      <key>Hour</key><integer>17</integer>
+      <key>Minute</key><integer>30</integer>
+    </dict>
+EOF
+      done
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# Echo the ProgramArguments xml fragment.
+job_program_args_xml() {
+  case "$1" in
+    cf-refresh)
+      cat <<EOF
+    <string>${PYTHON_BIN}</string>
+    <string>${REPO_ROOT}/scripts/populate_contracts.py</string>
+    <string>--snapshot</string>
+EOF
+      ;;
+    daily-etl)
+      cat <<EOF
+    <string>/bin/bash</string>
+    <string>${REPO_ROOT}/scripts/run_daily_etl.sh</string>
+EOF
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# ---- Plist generation ---------------------------------------------------
+
+generate_plist() {
+  local job="$1"
+  local label
+  label="$(job_label "$job")"
+
+  cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+
+  <key>ProgramArguments</key>
+  <array>
+$(job_program_args_xml "$job")
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>${REPO_ROOT}</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <array>
+$(job_schedule_xml "$job")
   </array>
 
   <key>RunAtLoad</key>
   <false/>
 
   <key>StandardOutPath</key>
-  <string>${LOG_DIR}/cf-refresh.out.log</string>
+  <string>${LOG_DIR}/${job}.out.log</string>
 
   <key>StandardErrorPath</key>
-  <string>${LOG_DIR}/cf-refresh.err.log</string>
+  <string>${LOG_DIR}/${job}.err.log</string>
 </dict>
 </plist>
 EOF
 }
 
+# ---- Action handlers ----------------------------------------------------
+
 cmd_print() {
-  generate_plist
+  local job="$1"
+  generate_plist "$job"
   cat <<EOF >&2
 
-# (printed plist above; nothing has been written)
-# To install:    $0 --install
-# To uninstall:  $0 --uninstall
-# To check:      $0 --status
+# (printed plist for '${job}' above; nothing has been written)
+# To install:    $0 ${job} --install
+# To uninstall:  $0 ${job} --uninstall
+# To check:      $0 ${job} --status
 EOF
 }
 
 cmd_install() {
+  local job="$1"
+  local plist_path
+  plist_path="$(job_plist_path "$job")"
   mkdir -p "$LOG_DIR"
-  mkdir -p "$(dirname "$PLIST_INSTALL_PATH")"
+  mkdir -p "$LAUNCH_AGENTS_DIR"
 
-  if [[ -f "$PLIST_INSTALL_PATH" ]]; then
-    echo "Existing plist at $PLIST_INSTALL_PATH; unloading first..." >&2
-    launchctl unload "$PLIST_INSTALL_PATH" 2>/dev/null || true
+  if [[ -f "$plist_path" ]]; then
+    echo "Existing plist at $plist_path; unloading first..." >&2
+    launchctl unload "$plist_path" 2>/dev/null || true
   fi
-  generate_plist > "$PLIST_INSTALL_PATH"
-  if ! plutil -lint "$PLIST_INSTALL_PATH" >/dev/null; then
+  generate_plist "$job" > "$plist_path"
+  if ! plutil -lint "$plist_path" >/dev/null; then
     echo "ERROR: generated plist is invalid" >&2
     exit 1
   fi
-  launchctl load "$PLIST_INSTALL_PATH"
-  echo "Installed and loaded ${LABEL}." >&2
-  echo "Logs: ${LOG_DIR}/cf-refresh.{out,err}.log" >&2
-  echo "Next runs: Mar/Jun/Sep/Dec 1 at 17:00 local." >&2
+  launchctl load "$plist_path"
+  echo "Installed and loaded $(job_label "$job")." >&2
+  echo "Plist: $plist_path" >&2
+  echo "Logs:  ${LOG_DIR}/${job}.{out,err}.log" >&2
+  case "$job" in
+    cf-refresh) echo "Next runs: Mar/Jun/Sep/Dec 1 at 17:00 local." >&2 ;;
+    daily-etl)  echo "Next runs: Mon–Fri at 17:30 local." >&2 ;;
+  esac
 }
 
 cmd_uninstall() {
-  if [[ -f "$PLIST_INSTALL_PATH" ]]; then
-    launchctl unload "$PLIST_INSTALL_PATH" 2>/dev/null || true
-    rm -f "$PLIST_INSTALL_PATH"
-    echo "Removed ${LABEL}." >&2
+  local job="$1"
+  local plist_path
+  plist_path="$(job_plist_path "$job")"
+  if [[ -f "$plist_path" ]]; then
+    launchctl unload "$plist_path" 2>/dev/null || true
+    rm -f "$plist_path"
+    echo "Removed $(job_label "$job")." >&2
   else
-    echo "No plist at $PLIST_INSTALL_PATH; nothing to remove." >&2
+    echo "No plist at $plist_path; nothing to remove." >&2
   fi
 }
 
 cmd_status() {
-  if [[ -f "$PLIST_INSTALL_PATH" ]]; then
-    echo "Plist: $PLIST_INSTALL_PATH" >&2
-    if launchctl list | grep -q "$LABEL"; then
+  local job="$1"
+  local plist_path label
+  plist_path="$(job_plist_path "$job")"
+  label="$(job_label "$job")"
+  if [[ -f "$plist_path" ]]; then
+    echo "Plist: $plist_path" >&2
+    if launchctl list | grep -q "$label"; then
       echo "Status: loaded" >&2
-      launchctl list "$LABEL" 2>/dev/null || true
+      launchctl list "$label" 2>/dev/null || true
     else
-      echo "Status: NOT loaded (try $0 --install to load)" >&2
+      echo "Status: NOT loaded (try $0 $job --install to load)" >&2
     fi
   else
     echo "Not installed." >&2
   fi
 }
 
-case "${1:-}" in
-  ""|--print|-p) cmd_print ;;
-  --install|-i)  cmd_install ;;
-  --uninstall|-u) cmd_uninstall ;;
-  --status|-s)   cmd_status ;;
-  -h|--help)
-    sed -n '1,/^set -euo pipefail/p' "$0" | sed 's/^# \{0,1\}//' | head -n -1
+list_jobs() {
+  cat <<EOF
+Available jobs:
+  cf-refresh   Quarterly  Mar/Jun/Sep/Dec 1 17:00  populate_contracts.py --snapshot
+  daily-etl    Mon–Fri    17:30                    run_daily_etl.sh
+
+Usage:
+  $0 cf-refresh             # print plist (dry run)
+  $0 daily-etl --install    # install + load
+  $0 daily-etl --status
+  $0 cf-refresh --uninstall
+EOF
+}
+
+# ---- CLI dispatch -------------------------------------------------------
+
+JOB="${1:-}"
+ACTION="${2:---print}"
+
+case "$JOB" in
+  ""|-h|--help) list_jobs ;;
+  cf-refresh|daily-etl)
+    case "$ACTION" in
+      --print|-p)     cmd_print "$JOB" ;;
+      --install|-i)   cmd_install "$JOB" ;;
+      --uninstall|-u) cmd_uninstall "$JOB" ;;
+      --status|-s)    cmd_status "$JOB" ;;
+      *) echo "Unknown action: $ACTION" >&2; list_jobs >&2; exit 2 ;;
+    esac
     ;;
-  *) echo "Unknown arg: $1" >&2; exit 2 ;;
+  *) echo "Unknown job: $JOB" >&2; list_jobs >&2; exit 2 ;;
 esac

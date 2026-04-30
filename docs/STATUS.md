@@ -75,14 +75,16 @@ scripts/
   compute_curve_signals.py    — 蝶式 / 陡平 + 60d Z（DV01 中性比例）
   compute_ctd_switch.py       — CTD 切换概率（MC，per-(date, contract)）
   backfill_bond_valuation.py — Sina 交易所收盘 → 单券 YTM 求解，写 bond_valuation
-  install_launchd.sh         — 季度 LaunchAgent（Mar/Jun/Sep/Dec 1 @ 17:00）
+  install_launchd.sh         — 季度 + 日终 LaunchAgent（cf-refresh / daily-etl 两 job）
+  run_daily_etl.sh           — 日终 wrapper：6 ETL/signal scripts + digest，~7 min
+  daily_digest.py            — 阈值过滤后输出 actionable 信号（json + md）
   run_backtest.py            — CLI 跑策略，写 trades + nav parquet + SQLite 指标
 
 tests/
   test_infra.py / test_cf_table.py / test_fetchers.py /
   test_market_fetchers.py / test_audit.py / test_pricing.py /
-  test_backtest.py
-  共 126/126 通过（offline）+ 7 联网用例
+  test_backtest.py / test_daily_digest.py
+  共 135/135 通过（offline）+ 7 联网用例
 ```
 
 ## 数据库现状（2026-04-28）
@@ -208,8 +210,16 @@ python3 scripts/backtest_grid.py --strategy basis_long_carry_T
 python3 scripts/backtest_grid.py --strategy calendar_mr_T_near_far \
     --entry 1.0,1.5,2.0,2.5 --exit 0,0.25,0.5 --hold 10,15,20,30
 
-# 启动 Streamlit MVP 面板（5 个 tab）
+# 启动 Streamlit MVP 面板（7 个 tab）
 python3 -m streamlit run app/streamlit_app.py
+
+# 一键日终（开发时手动跑；LaunchAgent 自动跑，~7 min）
+scripts/run_daily_etl.sh
+
+# 安装 LaunchAgents（默认 dry-run 打印；--install 真装）
+scripts/install_launchd.sh                       # 列出可用 jobs
+scripts/install_launchd.sh daily-etl --install   # 工作日 17:30 跑日终
+scripts/install_launchd.sh cf-refresh --install  # 季度 1 号 17:00 跑 CF
 
 # 健康检查
 python3 scripts/data_audit.py -o docs/data_audit.md
