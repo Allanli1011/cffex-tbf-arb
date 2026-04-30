@@ -156,3 +156,35 @@ def latest_date(*frames: pd.DataFrame) -> str | None:
         if df is not None and not df.empty and "date" in df.columns:
             dates.append(str(df["date"].max()))
     return max(dates) if dates else None
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def etl_health_snapshot() -> pd.DataFrame:
+    """For each parquet dataset return ``(dataset, file_count, latest_date,
+    days_lag)`` from the *real* latest trading day (max across all
+    datasets). Useful for surfacing stale ETL on the Overview tab.
+    """
+    rows: list[dict] = []
+    for ds, path in PARQUET_DATASETS.items():
+        files = sorted(path.glob("*.parquet")) if path.exists() else []
+        # File-name = ISO date for our datasets
+        date_files = [f.stem for f in files if len(f.stem) == 10
+                      and f.stem.count("-") == 2]
+        latest = max(date_files) if date_files else None
+        rows.append({
+            "dataset": ds,
+            "file_count": len(files),
+            "latest_date": latest,
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    overall_latest = df["latest_date"].dropna().max()
+    if overall_latest:
+        ref = pd.to_datetime(overall_latest)
+        df["days_lag"] = df["latest_date"].apply(
+            lambda d: (ref - pd.to_datetime(d)).days if d else None
+        )
+    else:
+        df["days_lag"] = None
+    return df

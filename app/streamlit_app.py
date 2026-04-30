@@ -29,6 +29,7 @@ import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from app.data_loaders import (  # noqa: E402
+    etl_health_snapshot,
     latest_date,
     load_backtest_grid_cells,
     load_backtest_grid_summary,
@@ -50,6 +51,31 @@ st.set_page_config(
 )
 
 
+# ---- Global as-of date helpers ------------------------------------------
+
+
+def _resolve_asof(default_asof: str | None) -> str | None:
+    """Return the sidebar-picked as-of date if set and not later than the
+    dataset's natural latest date; otherwise fall back to ``default_asof``.
+    """
+    if default_asof is None:
+        return None
+    override = st.session_state.get("asof_override")
+    if not override:
+        return default_asof
+    if str(override) > default_asof:
+        # User picked a future date relative to the data — clamp to data
+        return default_asof
+    return str(override)
+
+
+def _apply_asof(df: pd.DataFrame, asof: str | None) -> pd.DataFrame:
+    """Truncate a dated frame to rows on or before ``asof``."""
+    if df is None or df.empty or asof is None or "date" not in df.columns:
+        return df
+    return df[df["date"] <= asof].reset_index(drop=True)
+
+
 # ---- Tab 1: Overview ----------------------------------------------------
 
 
@@ -61,12 +87,19 @@ def render_overview():
     curve = load_curve_signals()
     futures = load_futures_daily()
 
-    asof = latest_date(basis, cal, curve, futures)
+    asof = _resolve_asof(latest_date(basis, cal, curve, futures))
     st.caption(f"As of: **{asof}**" if asof else "No data loaded yet.")
     if not asof:
         st.warning("No signal parquet files found under data/parquet/. "
                    "Run the ETL + signal scripts first.")
         return
+
+    # Truncate every frame to the as-of date so a replay reflects only
+    # what was knowable on that close.
+    basis = _apply_asof(basis, asof)
+    cal = _apply_asof(cal, asof)
+    curve = _apply_asof(curve, asof)
+    futures = _apply_asof(futures, asof)
 
     cols = st.columns(4)
 
@@ -123,6 +156,7 @@ def render_overview():
     with cols[3]:
         st.subheader("Funding (FDR007 etc.)")
         repo = load_repo_rate()
+        repo = _apply_asof(repo, asof)
         sub = repo[repo["date"] == asof] if not repo.empty else pd.DataFrame()
         if sub.empty:
             st.info("No repo rows.")
@@ -136,6 +170,36 @@ def render_overview():
                 use_container_width=True,
             )
 
+    # ---- ETL health snapshot --------------------------------------------
+    st.divider()
+    st.subheader("ETL health")
+    health = etl_health_snapshot()
+    if health.empty:
+        st.info("No parquet datasets present.")
+    else:
+        # Highlight rows that are stale relative to the latest day
+        # observed across all datasets (>1 trading-day lag = caution)
+        def _row_color(lag):
+            if lag is None or pd.isna(lag):
+                return "background-color: #f8d7da"  # red — missing
+            if lag <= 1:
+                return ""
+            if lag <= 5:
+                return "background-color: #fff3cd"  # yellow — mildly stale
+            return "background-color: #f8d7da"      # red — very stale
+
+        styled = health.style.apply(
+            lambda row: [_row_color(row["days_lag"])] * len(row),
+            axis=1,
+        )
+        st.dataframe(styled, hide_index=True, use_container_width=True)
+        max_lag = health["days_lag"].dropna().max()
+        if pd.notna(max_lag) and max_lag > 5:
+            st.warning(
+                f"⚠️ Some datasets are >5 trading days behind the most "
+                f"recent file. Re-run ``scripts/backfill_market_data.py``."
+            )
+
 
 # ---- Tab 2: Basis -------------------------------------------------------
 
@@ -146,6 +210,7 @@ def render_basis():
     if basis.empty:
         st.warning("No basis_signals data.")
         return
+    basis = _apply_asof(basis, _resolve_asof(basis["date"].max()))
 
     products = sorted(basis["product"].unique().tolist())
     product = st.selectbox("Product", products, index=products.index("T")
@@ -164,16 +229,33 @@ def render_basis():
     today = sub[sub["date"] == asof].sort_values("irr",
                                                  ascending=False)
     st.subheader(f"Deliverable pool — {contract} on {asof}")
+    # ``ytm_source`` differentiates per-bond YTM (sina exchange close)
+    # vs par-curve interpolation — surfaced so the operator knows which
+    # rows have stronger pricing
+    cols_show = [
+        "bond_code", "bond_name", "coupon_rate", "maturity_date",
+        "cf", "futures_settle", "ytm_used", "implied_ytm",
+        "bond_clean", "gross_basis", "net_basis", "irr",
+        "irr_minus_fdr007_bp", "is_ctd",
+    ]
+    if "ytm_source" in today.columns:
+        cols_show.insert(7, "ytm_source")
     st.dataframe(
-        today[[
-            "bond_code", "bond_name", "coupon_rate", "maturity_date",
-            "cf", "futures_settle", "ytm_used", "implied_ytm",
-            "bond_clean", "gross_basis", "net_basis", "irr",
-            "irr_minus_fdr007_bp", "is_ctd",
-        ]],
+        today[cols_show],
         hide_index=True,
         use_container_width=True,
     )
+
+    if "ytm_source" in today.columns:
+        n_bv = int((today["ytm_source"] == "bond_valuation").sum())
+        n_total = len(today)
+        if n_total > 0:
+            pct = n_bv / n_total * 100
+            st.caption(
+                f"Per-bond YTM coverage: {n_bv}/{n_total} bonds "
+                f"({pct:.0f}%) priced via Sina exchange close; rest fall "
+                "back to par-curve interpolation."
+            )
 
     # CTD timeseries
     ctd = sub[sub["is_ctd"]].sort_values("date")
@@ -210,6 +292,7 @@ def render_calendar():
     if cal.empty:
         st.warning("No calendar_spreads data.")
         return
+    cal = _apply_asof(cal, _resolve_asof(cal["date"].max()))
 
     products = sorted(cal["product"].unique().tolist())
     legs = sorted(cal["leg"].unique().tolist())
@@ -260,6 +343,7 @@ def render_curve():
     if curve.empty:
         st.warning("No curve_signals data.")
         return
+    curve = _apply_asof(curve, _resolve_asof(curve["date"].max()))
 
     asof = curve["date"].max()
     today = curve[curve["date"] == asof].sort_values("structure")
@@ -327,6 +411,7 @@ def render_ctd_delivery():
             "``python3 scripts/compute_ctd_switch.py`` first."
         )
         return
+    df = _apply_asof(df, _resolve_asof(df["date"].max()))
 
     asof = df["date"].max()
     today = df[df["date"] == asof].sort_values(
@@ -439,11 +524,14 @@ def render_risk_positions():
     basis = load_basis_signals()
     rank = load_futures_oi_rank()
 
-    asof = latest_date(futures, basis, rank)
+    asof = _resolve_asof(latest_date(futures, basis, rank))
     st.caption(f"As of: **{asof}**")
     if not asof or futures.empty:
         st.warning("No futures data — run the daily ETL first.")
         return
+    futures = _apply_asof(futures, asof)
+    basis = _apply_asof(basis, asof)
+    rank = _apply_asof(rank, asof)
 
     today_f = futures[futures["date"] == asof].copy()
     today_b = basis[basis["date"] == asof] if not basis.empty else pd.DataFrame()
@@ -768,12 +856,58 @@ def render_backtest():
 # ---- App entry ----------------------------------------------------------
 
 
+def _render_sidebar():
+    """Sidebar with the global as-of date picker. Sets
+    ``st.session_state["asof_override"]`` (a YYYY-MM-DD string or None)
+    that every tab consults via :func:`_resolve_asof`.
+    """
+    st.sidebar.header("Controls")
+
+    # Use basis_signals as the canonical date span (it depends on every
+    # other signal-side dataset).
+    basis = load_basis_signals()
+    if basis.empty:
+        st.sidebar.info("No data loaded yet.")
+        return
+    min_d = pd.to_datetime(basis["date"].min()).date()
+    max_d = pd.to_datetime(basis["date"].max()).date()
+
+    pick = st.sidebar.date_input(
+        "As-of date",
+        value=max_d,
+        min_value=min_d,
+        max_value=max_d,
+        help="All tabs treat this date as 'today'. Pick an earlier date "
+             "to replay the panel as of that close.",
+    )
+    if st.sidebar.button("Reset to latest"):
+        st.session_state["asof_override"] = None
+        st.rerun()
+    else:
+        st.session_state["asof_override"] = (
+            pick.isoformat() if pick != max_d else None
+        )
+
+    if st.session_state.get("asof_override"):
+        st.sidebar.warning(
+            f"As-of: **{st.session_state['asof_override']}** (replay)"
+        )
+    else:
+        st.sidebar.success(f"As-of: **{max_d.isoformat()}** (latest)")
+
+    st.sidebar.caption(
+        f"Data span: {min_d.isoformat()} → {max_d.isoformat()}"
+    )
+
+
 def main():
     st.title("CFFEX TBF Arb Panel")
     st.caption(
         "MVP — basis / calendar / curve signals + backtest runs."
         " Data: open-source AKShare + CFFEX scrape."
     )
+
+    _render_sidebar()
 
     (tab_overview, tab_basis, tab_cal, tab_curve, tab_ctd,
      tab_risk, tab_bt) = st.tabs([

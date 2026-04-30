@@ -55,11 +55,13 @@ sina 历史可回溯到 2016-11。``repo_rate`` 从 15 序列升至 17 序列。
 - **内容**：每季度首日 17:00 跑 `populate_contracts.py --snapshot` + 通知
 - **预估**：30 分钟
 
-### B7. 现有面板小改进
-- sidebar 全局日期 picker（覆盖所有 tab）
-- Overview tab 加 ETL 健康卡片（最近一次 ETL 运行 / 数据延迟）
-- Basis tab 加 ytm_source 列（区分单券 vs par 曲线）
-- **预估**：1–2 小时
+### ~~B7. 现有面板小改进~~ ✅ 2026-04-30
+完成。
+- Sidebar **全局 As-of 日期 picker**：每 tab 通过 `_resolve_asof()` + `_apply_asof()`
+  尊重 picker 选择，支持回放过去任一交易日；"Reset to latest" 按钮即时复位
+- Overview 加 **ETL 健康表**：每 parquet dataset 显示 file_count / latest_date /
+  days_lag，按 lag 颜色编码（绿 ≤1d / 黄 ≤5d / 红 >5d 或缺失）
+- Basis tab 加 **ytm_source 列** + 覆盖率 caption（"X/Y bonds priced via Sina"）
 
 ## P2（低优先级 / 长期）
 
@@ -113,3 +115,4 @@ sina 历史可回溯到 2016-11。``repo_rate`` 从 15 序列升至 17 序列。
 - ✅ 2026-04-30 — B3 Phase 3 参数扫描（5×5×5 网格 / 710 cells / 6 策略）
 - ✅ 2026-04-30 — B2 Phase 5 模块 G 风险与持仓分析面板
 - ✅ 2026-04-30 — B5 Phase 1.4 GC001/014 完整回填（sina 路径替代 eastmoney）
+- ✅ 2026-04-30 — B7 面板小改进（sidebar as-of / ETL 健康卡 / ytm_source 列）
