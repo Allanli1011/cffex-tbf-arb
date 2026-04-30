@@ -12,7 +12,9 @@
 
 ## P0（高优先级，可立即推进）
 
-> **B1 + B2 + B3 已完成 2026-04-30** — Phase 5 仅剩 B4（模块 H 信号告警 webhook）。所有 P0 任务清空。
+> **2026-04-30 截止：B1 / B2 / B3 / B5 / B6 / B7 全部清空。**
+> 剩余 P1 仅 B4（模块 H 信号告警 webhook，daily 监控紧迫度低）。
+> 下一阶段建议重心转向 P2：CCDC v2 估值 / ML 信号 / regime / 流动性 / 压测。
 
 
 ### ~~B1. Phase 5 — 模块 E：CTD 与交割分析面板~~ ✅ 2026-04-30
@@ -50,10 +52,12 @@ steepener_5s30s +4.66；规律性发现：更紧入场 (~1.0σ) + 更短持仓 (
 切到 sina 路径（``bond_zh_hs_daily(symbol='sh204XXX')``），3 个 GC 系列均 254 天完整，
 sina 历史可回溯到 2016-11。``repo_rate`` 从 15 序列升至 17 序列。
 
-### B6. Phase 1.2 — CF 季度自动运行
-- **新增**：`scripts/install_launchd.sh` + `configs/com.cffex.cf-refresh.plist`
-- **内容**：每季度首日 17:00 跑 `populate_contracts.py --snapshot` + 通知
-- **预估**：30 分钟
+### ~~B6. Phase 1.2 — CF 季度自动运行~~ ✅ 2026-04-30
+完成。`scripts/install_launchd.sh` 生成 macOS LaunchAgent plist；
+`--install` / `--uninstall` / `--status` / `--print`（默认）四种动作，
+默认 dry-run 防误装。触发时间：Mar/Jun/Sep/Dec 1 @ 17:00 local，
+跑 `populate_contracts.py --snapshot`，stdout/stderr 写
+`data/logs/cf-refresh.{out,err}.log`。`plutil -lint` 通过。
 
 ### ~~B7. 现有面板小改进~~ ✅ 2026-04-30
 完成。
@@ -116,3 +120,4 @@ sina 历史可回溯到 2016-11。``repo_rate`` 从 15 序列升至 17 序列。
 - ✅ 2026-04-30 — B2 Phase 5 模块 G 风险与持仓分析面板
 - ✅ 2026-04-30 — B5 Phase 1.4 GC001/014 完整回填（sina 路径替代 eastmoney）
 - ✅ 2026-04-30 — B7 面板小改进（sidebar as-of / ETL 健康卡 / ytm_source 列）
+- ✅ 2026-04-30 — B6 Phase 1.2 CF 季度 LaunchAgent 安装脚本

@@ -35,7 +35,7 @@
 - [x] CF append-only + 冲突检测，幂等性验证通过
 - [x] Wayback 历史回填，覆盖 T1803–TS2612 共 944 条
 - [x] 可交割券池维护（与 CF 同源）
-- [ ] **季度自动运行（cron / launchd）配置**（代码已就绪）
+- [x] **季度自动运行**：`scripts/install_launchd.sh` 生成 macOS LaunchAgent，季度首日 17:00 跑 `populate_contracts.py --snapshot`。默认 dry-run 打印 plist；`--install` / `--uninstall` / `--status` 三个动作；`plutil -lint` 通过
 
 ### 1.3 行情数据 ✅（v1 单券估值）
 - [x] 期货日线（OHLCV + settle + OI + turnover）

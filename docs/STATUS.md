@@ -16,7 +16,7 @@ frequency. Use system Python 3.9.6 directly, no venv.
 |------|------|
 | 0 — 脚手架 / 文档 | ✅ done |
 | 1.1 — 基础设施 (storage / utils / ETL base / calendar) | ✅ done |
-| 1.2 — 合约 / CF / bonds master | ✅ done; 944 historical CFs (T1803..TS2612) |
+| 1.2 — 合约 / CF / bonds master | ✅ done; 944 CFs + 季度 launchd 脚本就绪 |
 | 1.3 — 行情 (futures / OI rank / yield curve / 单券估值 v1) | ✅ done; Sina 交易所收盘 → 解 YTM；TL 偏差 -490→-129bp |
 | 1.4 — 资金面 (CFETS / GC / Shibor, 17 系列) | ✅ done; GC001/014 已通过 sina 路径完整回填 |
 | 1.5 — 数据校验 (audit + report) | ✅ done; baseline 16 ok / 3 warning / 0 error |
@@ -75,6 +75,7 @@ scripts/
   compute_curve_signals.py    — 蝶式 / 陡平 + 60d Z（DV01 中性比例）
   compute_ctd_switch.py       — CTD 切换概率（MC，per-(date, contract)）
   backfill_bond_valuation.py — Sina 交易所收盘 → 单券 YTM 求解，写 bond_valuation
+  install_launchd.sh         — 季度 LaunchAgent（Mar/Jun/Sep/Dec 1 @ 17:00）
   run_backtest.py            — CLI 跑策略，写 trades + nav parquet + SQLite 指标
 
 tests/
