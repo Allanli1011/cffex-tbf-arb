@@ -12,21 +12,20 @@
 
 ## P0（高优先级，可立即推进）
 
-> **B1 + B3 已完成 2026-04-30** — 见下方"已完成"区。新的 P0 起点：B2（Phase 5 模块 G 风险与持仓）。
+> **B1 + B2 + B3 已完成 2026-04-30** — Phase 5 仅剩 B4（模块 H 信号告警 webhook）。所有 P0 任务清空。
 
 
 ### ~~B1. Phase 5 — 模块 E：CTD 与交割分析面板~~ ✅ 2026-04-30
 完成。`render_ctd_delivery()` tab 提供当日切换概率排序表 + 选中合约 6 档情景表
 + 历史时序 + product × contract 热图，并显示 IRR-CTD vs min-basis-CTD 不一致提示。
 
-### B2. Phase 5 — 模块 G：风险与持仓分析
-- **依赖**：`futures_oi_rank` parquet（已有 41730 行）+ `basis_signals` DV01 列
-- **内容**：
-  - DV01 暴露热图（产品 × 合约月）
-  - 多空比 / OI 集中度分析
-  - 头寸时序：top-5 多头与 top-5 空头机构
-- **验收**：模块 G tab 可用
-- **预估**：2–3 小时
+### ~~B2. Phase 5 — 模块 G：风险与持仓分析~~ ✅ 2026-04-30
+完成。`render_risk_positions()` 7th tab：
+- 市场 $-DV01 热图（4 product × 12 contract，单位 kCNY/bp，深红越大）
+- 各品种总 $-DV01 metric（实测 TL 401 / T 266 / TF 108 / TS 33 mCNY/bp）
+- 每合约 top-5 长 / 短头集中度百分比表
+- 选合约 → top-20 多空机构柱图，颜色按 Δ OI（红蓝双向）
+- 当日 |ΔOI| 最大的 8 个长 / 短头变化
 
 ### ~~B3. Phase 3 — 参数扫描与敏感度分析~~ ✅ 2026-04-30
 完成。`scripts/backtest_grid.py` 对每个策略跑 5×5×5 entry/exit/hold 网格；710 cells / 6 策略
@@ -115,3 +114,4 @@ steepener_5s30s +4.66；规律性发现：更紧入场 (~1.0σ) + 更短持仓 (
 - ✅ 2026-04-30 — coupon_frequency 半年付息建模（CF ≤5bp 92.9→94.4%）
 - ✅ 2026-04-30 — B1 Phase 5 模块 E CTD & 交割分析面板
 - ✅ 2026-04-30 — B3 Phase 3 参数扫描（5×5×5 网格 / 710 cells / 6 策略）
+- ✅ 2026-04-30 — B2 Phase 5 模块 G 风险与持仓分析面板

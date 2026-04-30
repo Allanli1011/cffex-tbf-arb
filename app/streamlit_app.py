@@ -4,13 +4,14 @@ Run with::
 
     streamlit run app/streamlit_app.py
 
-Six tabs:
+Seven tabs:
     1. Overview  — latest-day cards across all 4 signal families
     2. Basis     — IRR / net-basis tables + IRR vs FDR007 timeseries
     3. Calendar  — cross-quarter spreads + Z-score timeseries
     4. Curve     — fly + steepener live levels + history
     5. CTD       — Monte Carlo switch probabilities + scenario table
-    6. Backtest  — pick a run, NAV curve, trades, summary metrics
+    6. Risk      — DV01 exposure + OI concentration + top parties
+    7. Backtest  — pick a run, NAV curve, trades, summary metrics
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from app.data_loaders import (  # noqa: E402
     load_calendar_spreads,
     load_ctd_switch,
     load_curve_signals,
+    load_futures_oi_rank,
     load_futures_daily,
     load_repo_rate,
 )
@@ -427,7 +429,188 @@ def render_ctd_delivery():
     st.plotly_chart(fig2, use_container_width=True)
 
 
-# ---- Tab 6: Backtest ----------------------------------------------------
+# ---- Tab 6: Risk & positions --------------------------------------------
+
+
+def render_risk_positions():
+    st.header("Risk & positions")
+
+    futures = load_futures_daily()
+    basis = load_basis_signals()
+    rank = load_futures_oi_rank()
+
+    asof = latest_date(futures, basis, rank)
+    st.caption(f"As of: **{asof}**")
+    if not asof or futures.empty:
+        st.warning("No futures data — run the daily ETL first.")
+        return
+
+    today_f = futures[futures["date"] == asof].copy()
+    today_b = basis[basis["date"] == asof] if not basis.empty else pd.DataFrame()
+
+    # ---- Section 1: Market DV01 exposure --------------------------------
+    st.subheader("Market $DV01 exposure")
+    st.caption(
+        "Per contract: open_interest × CTD ``futures_dv01_per_contract``. "
+        "Aggregates the full market's interest-rate exposure from the "
+        "long side (short side is mirrored)."
+    )
+    if today_b.empty:
+        st.info("No basis_signals for today — DV01 unavailable.")
+    else:
+        ctd = today_b[today_b["is_ctd"]][
+            ["contract_id", "futures_dv01_per_contract"]
+        ]
+        merged = today_f.merge(ctd, on="contract_id", how="left")
+        merged["dv01_total_rmb_per_bp"] = (
+            merged["open_interest"].astype(float)
+            * merged["futures_dv01_per_contract"].astype(float)
+        )
+        merged["dv01_total_kcny_per_bp"] = (
+            merged["dv01_total_rmb_per_bp"] / 1000.0
+        ).round(0)
+        # Heatmap product × contract
+        pivot = merged.pivot(
+            index="product", columns="contract_id",
+            values="dv01_total_kcny_per_bp",
+        ).fillna(0.0)
+        fig = px.imshow(
+            pivot,
+            text_auto=".0f",
+            color_continuous_scale="Reds",
+            aspect="auto",
+            labels=dict(x="contract", y="product",
+                        color="kCNY / bp"),
+        )
+        fig.update_layout(
+            title="Open-interest-weighted DV01 (kCNY per 1bp parallel shift)",
+            height=300,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        total_by_product = merged.groupby("product")[
+            "dv01_total_rmb_per_bp"
+        ].sum().sort_values(ascending=False)
+        cols = st.columns(len(total_by_product))
+        for col, (product, val) in zip(cols, total_by_product.items()):
+            col.metric(
+                f"{product} total $-DV01",
+                f"{val/1e6:.1f} mCNY/bp",
+            )
+
+    # ---- Section 2: OI concentration ------------------------------------
+    st.subheader("Top-5 OI concentration")
+    if rank.empty:
+        st.info("No OI rank data.")
+    else:
+        rank_today = rank[rank["date"] == asof]
+        oi_total_by_contract = today_f.set_index("contract_id")[
+            "open_interest"
+        ]
+        rows = []
+        for cid, sub in rank_today.groupby("contract_id"):
+            top5_long = sub.nsmallest(5, "rank")[
+                "long_open_interest"
+            ].astype(float).sum()
+            top5_short = sub.nsmallest(5, "rank")[
+                "short_open_interest"
+            ].astype(float).sum()
+            total_oi = float(oi_total_by_contract.get(cid, 0))
+            if total_oi <= 0:
+                continue
+            rows.append({
+                "contract_id": cid,
+                "product": str(sub["product"].iloc[0]),
+                "total_OI": int(total_oi),
+                "top5_long_share_pct": round(top5_long / total_oi * 100, 1),
+                "top5_short_share_pct": round(top5_short / total_oi * 100, 1),
+            })
+        if rows:
+            conc = pd.DataFrame(rows).sort_values(
+                ["product", "contract_id"]
+            )
+            st.dataframe(conc, hide_index=True, use_container_width=True)
+
+    # ---- Section 3: Per-contract drill-down -----------------------------
+    st.subheader("Per-contract top-20 long / short")
+    if rank.empty:
+        return
+    contracts = sorted(rank_today["contract_id"].unique().tolist())
+    if not contracts:
+        st.info("No contracts in rank table for today.")
+        return
+    sel = st.selectbox(
+        "Contract", contracts,
+        index=contracts.index("T2606") if "T2606" in contracts else 0,
+        key="risk_contract",
+    )
+    sub = rank_today[rank_today["contract_id"] == sel].sort_values("rank")
+
+    long_df = sub[["long_party_name", "long_open_interest",
+                   "long_open_interest_chg"]].rename(columns={
+        "long_party_name": "party",
+        "long_open_interest": "long OI",
+        "long_open_interest_chg": "Δ long OI",
+    })
+    short_df = sub[["short_party_name", "short_open_interest",
+                    "short_open_interest_chg"]].rename(columns={
+        "short_party_name": "party",
+        "short_open_interest": "short OI",
+        "short_open_interest_chg": "Δ short OI",
+    })
+
+    c_left, c_right = st.columns(2)
+    with c_left:
+        st.markdown(f"**Top-20 long — {sel}**")
+        fig_l = px.bar(
+            long_df, x="long OI", y="party", orientation="h",
+            color="Δ long OI",
+            color_continuous_scale="RdBu",
+            color_continuous_midpoint=0,
+        )
+        fig_l.update_yaxes(autorange="reversed")
+        fig_l.update_layout(height=520, margin=dict(l=0, r=10, t=10, b=0))
+        st.plotly_chart(fig_l, use_container_width=True)
+    with c_right:
+        st.markdown(f"**Top-20 short — {sel}**")
+        fig_s = px.bar(
+            short_df, x="short OI", y="party", orientation="h",
+            color="Δ short OI",
+            color_continuous_scale="RdBu",
+            color_continuous_midpoint=0,
+        )
+        fig_s.update_yaxes(autorange="reversed")
+        fig_s.update_layout(height=520, margin=dict(l=0, r=10, t=10, b=0))
+        st.plotly_chart(fig_s, use_container_width=True)
+
+    # ---- Section 4: Largest absolute movers today -----------------------
+    st.subheader("Today's biggest movers (Δ OI by side)")
+    movers_long = rank_today[[
+        "contract_id", "long_party_name",
+        "long_open_interest", "long_open_interest_chg",
+    ]].copy()
+    movers_long["abs_chg"] = movers_long["long_open_interest_chg"].abs()
+    movers_long = movers_long.nlargest(8, "abs_chg").drop(columns="abs_chg")
+
+    movers_short = rank_today[[
+        "contract_id", "short_party_name",
+        "short_open_interest", "short_open_interest_chg",
+    ]].copy()
+    movers_short["abs_chg"] = movers_short["short_open_interest_chg"].abs()
+    movers_short = movers_short.nlargest(8, "abs_chg").drop(columns="abs_chg")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Long-side movers**")
+        st.dataframe(movers_long, hide_index=True,
+                     use_container_width=True)
+    with c2:
+        st.markdown("**Short-side movers**")
+        st.dataframe(movers_short, hide_index=True,
+                     use_container_width=True)
+
+
+# ---- Tab 7: Backtest ----------------------------------------------------
 
 
 def render_backtest():
@@ -593,8 +776,9 @@ def main():
     )
 
     (tab_overview, tab_basis, tab_cal, tab_curve, tab_ctd,
-     tab_bt) = st.tabs([
-        "Overview", "Basis", "Calendar", "Curve", "CTD", "Backtest",
+     tab_risk, tab_bt) = st.tabs([
+        "Overview", "Basis", "Calendar", "Curve", "CTD",
+        "Risk", "Backtest",
     ])
     with tab_overview:
         render_overview()
@@ -606,6 +790,8 @@ def main():
         render_curve()
     with tab_ctd:
         render_ctd_delivery()
+    with tab_risk:
+        render_risk_positions()
     with tab_bt:
         render_backtest()
 
