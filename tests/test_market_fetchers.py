@@ -184,18 +184,21 @@ def test_fetch_cfets_repo_fixings_long_format():
 
 
 def test_fetch_exchange_repo_filters_columns():
+    """Repo data now sourced via Sina (``ak.bond_zh_hs_daily``); the
+    fetcher should normalise its OHLCV payload into the long
+    ``[date, rate_name, value_pct]`` format we use across all funding
+    rate series."""
     from src.data.fetchers import fetch_exchange_repo
 
     fake = pd.DataFrame({
-        "日期": ["2026-04-23", "2026-04-24"],
-        "开盘": [1.40, 1.40],
-        "收盘": [1.39, 1.38],
-        "最高": [1.43, 1.40],
-        "最低": [1.21, 1.36],
-        "成交量": [1000, 2000],
-        "成交额": [1e8, 2e8],
+        "date": ["2026-04-23", "2026-04-24"],
+        "open": [1.40, 1.40],
+        "high": [1.43, 1.40],
+        "low": [1.21, 1.36],
+        "close": [1.39, 1.38],
+        "volume": [1000, 2000],
     })
-    with patch("akshare.bond_buy_back_hist_em", return_value=fake):
+    with patch("akshare.bond_zh_hs_daily", return_value=fake):
         df = fetch_exchange_repo(symbol="GC007")
 
     assert len(df) == 2

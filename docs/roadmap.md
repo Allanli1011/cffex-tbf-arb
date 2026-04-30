@@ -47,11 +47,11 @@
 - **TL 偏差从 -490bp → -129bp（74% 修复）**；残余 -129bp 受限于交易所稀疏 + 交易所/银行间价差
 - [ ] **现券估值 v2（可选）**：接 CCDC 付费估值或 chinabond.com.cn 公开扫描，闭合最后 -129bp
 
-### 1.4 资金面数据 ✅（GC001/014 残缺）
+### 1.4 资金面数据 ✅
 - [x] CFETS FR/FDR 全 6 序列（`repo_rate_hist`）
-- [x] GC007（`bond_buy_back_hist_em`）
+- [x] **GC001 / GC007 / GC014** 全部 254 天完整 — 切到 sina 路径（``bond_zh_hs_daily(symbol='sh204XXX')``），sina 历史可回溯到 2016-11
 - [x] Shibor 全期限 O/N..1Y
-- [ ] **GC001 / GC014 完整回填**：本机 eastmoney 代理拦截，仅 GC007 252 天完整
+- [x] 17 利率序列覆盖（vs 之前 15）
 
 ### 1.5 数据校验 ✅
 - [x] `audit.py` 9 类检查

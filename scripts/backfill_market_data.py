@@ -163,11 +163,12 @@ def _process_funding_rates(start: dt.date, end: dt.date, force: bool) -> int:
             logger.error(f"CFETS fixings {chunk_start}..{chunk_end} failed: {exc}")
         cur = next_month
 
-    # Exchange repo (GC001/007/014). Eastmoney throttles back-to-back
-    # full-history pulls; sleep briefly between symbols to stay polite.
+    # Exchange repo (GC001/007/014). Sina is the source of truth here;
+    # the original eastmoney path was flaky through proxies. Brief
+    # inter-symbol sleep to stay polite.
     for i, sym in enumerate(GC_SYMBOLS):
         if i > 0:
-            time.sleep(3.0)
+            time.sleep(2.0)
         try:
             df = fetch_exchange_repo(symbol=sym)
             df = df[(df["date"] >= start.isoformat())

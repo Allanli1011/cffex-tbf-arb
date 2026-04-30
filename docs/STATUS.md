@@ -18,7 +18,7 @@ frequency. Use system Python 3.9.6 directly, no venv.
 | 1.1 — 基础设施 (storage / utils / ETL base / calendar) | ✅ done |
 | 1.2 — 合约 / CF / bonds master | ✅ done; 944 historical CFs (T1803..TS2612) |
 | 1.3 — 行情 (futures / OI rank / yield curve / 单券估值 v1) | ✅ done; Sina 交易所收盘 → 解 YTM；TL 偏差 -490→-129bp |
-| 1.4 — 资金面 (CFETS / GC / Shibor, 15 系列) | ✅ done |
+| 1.4 — 资金面 (CFETS / GC / Shibor, 17 系列) | ✅ done; GC001/014 已通过 sina 路径完整回填 |
 | 1.5 — 数据校验 (audit + report) | ✅ done; baseline 16 ok / 3 warning / 0 error |
 | 2.1 — CF 公式 + 应计利息 | ✅ done; max diff vs official 47bp (1 outlier) |
 | 2.2 — IRR / 基差 / 净基差 | ✅ done; 8988 signals × 144 days |
@@ -95,7 +95,7 @@ tests/
 | `futures_oi_rank` parquet | 41730 | 同上 |
 | `bond_yield_curve` parquet | 2056 / 257 天 | 同上 |
 | `bond_valuation` parquet | 4359 / 147 天 | Sina 交易所收盘 → 单券 YTM |
-| `repo_rate` parquet | 3850 / 258 天 | 15 利率序列 |
+| `repo_rate` parquet | 4402 / 260 天 | 17 利率序列（GC001/007/014 全 254 天）|
 | `basis_signals` parquet | 11079 / 144 天 | IRR + DV01 |
 | `calendar_spreads` parquet | 3000 / 250 天 | Z-score 含 |
 | `curve_signals` parquet | 576 / 144 天 | 4 结构 × 144 天，含 60d Z |
@@ -112,7 +112,7 @@ tests/
 3. **单券估值（v1）已接入** — Phase 1.3 完成。Sina 交易所日收盘 → ``yield_from_price`` 解 YTM，写 ``bond_valuation`` parquet；``compute_basis_signals`` 优先用单券 YTM，缺数据则 fallback par 曲线。覆盖：50% 行 (5587/11079)，TL 68% / TS 48% / T 46% / TF 30%。**TL bias 从 -490bp → -129bp（74% 修复）**；剩余 -129bp 来自老券交易所稀疏 + 交易所/银行间价差。CCDC 官方付息估值仍需付费接入。
 4. **CF 公式精度** — **94.4% 在 5bp 以内**（2026-04-30 加入半年付息后从 92.9% 提升）；公式实现正确；个别 outlier 是中途加入交割池的特殊券（T1809/180020 47bp），不调公式。
 9. **半年付息（coupon_frequency）已建模** — Chinese gov bonds: 1y/3y/5y/7y → annual；10y/30y/50y → semi-annual。`bonds.coupon_frequency` 列 + `compute_cf` / `price_from_yield` / `compute_basis` 全链路支持 f=2。198 个债按"原始期限 ≥10y → f=2"自动派生（122 annual + 76 semi-annual）。
-5. **GC001/GC014 历史回填留缺** — 本机 eastmoney 代理拦截，GC007 已完整。
+5. ~~GC001/GC014 历史回填留缺~~ — **2026-04-30 修**：切到 sina 路径（``bond_zh_hs_daily(symbol='sh204XXX')``），3 个 GC 系列均 254 天完整覆盖，sina 历史可回溯到 2016-11。
 6. **CFETS 接口按月切片** — `repo_rate_hist` 跨月偶发返回单行，已分月拉取。
 7. **CCDC 收益率曲线 < 1 年限制** — `_process_yield_curve` 自动 330 天分段。
 8. **eastmoney 节流** — 多 GC 代码连续拉触发限流，已加 3s inter-symbol 延迟。

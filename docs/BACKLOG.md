@@ -45,13 +45,10 @@ steepener_5s30s +4.66；规律性发现：更紧入场 (~1.0σ) + 更短持仓 (
 - **新增**：`scripts/send_alerts.py`，按日跑
 - **预估**：2–3 小时
 
-### B5. Phase 1.4 — GC001 / GC014 完整回填
-- **现状**：本机 eastmoney 代理拦截 GC001/014，仅 GC007 完整 252 天
-- **方案候选**：
-  - sina 货币市场接口（需调研）
-  - 改用浏览器 user-agent header 重试
-  - 同源页面手动下载 CSV
-- **预估**：1 小时
+### ~~B5. Phase 1.4 — GC001 / GC014 完整回填~~ ✅ 2026-04-30
+完成。原 eastmoney 路径（``bond_buy_back_hist_em``）通过本机代理彻底失败；
+切到 sina 路径（``bond_zh_hs_daily(symbol='sh204XXX')``），3 个 GC 系列均 254 天完整，
+sina 历史可回溯到 2016-11。``repo_rate`` 从 15 序列升至 17 序列。
 
 ### B6. Phase 1.2 — CF 季度自动运行
 - **新增**：`scripts/install_launchd.sh` + `configs/com.cffex.cf-refresh.plist`
@@ -115,3 +112,4 @@ steepener_5s30s +4.66；规律性发现：更紧入场 (~1.0σ) + 更短持仓 (
 - ✅ 2026-04-30 — B1 Phase 5 模块 E CTD & 交割分析面板
 - ✅ 2026-04-30 — B3 Phase 3 参数扫描（5×5×5 网格 / 710 cells / 6 策略）
 - ✅ 2026-04-30 — B2 Phase 5 模块 G 风险与持仓分析面板
+- ✅ 2026-04-30 — B5 Phase 1.4 GC001/014 完整回填（sina 路径替代 eastmoney）

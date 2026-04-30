@@ -445,8 +445,12 @@ def fetch_exchange_repo(symbol: str = "GC007") -> pd.DataFrame:
 
     Returns long format ``[date, rate_name, value_pct]`` using the
     closing rate as ``value_pct`` (consistent with CFETS fixings).
-    The full history (~5000 trading days back to 2006) is returned by
-    AKShare in a single call; callers can slice client-side.
+
+    Source: Sina exchange bond endpoint (``ak.bond_zh_hs_daily`` with
+    ``sh204XXX`` symbol). History extends back to 2016-11. Eastmoney's
+    ``bond_buy_back_hist_em`` was the original source but became
+    unreliable through proxies; the Sina endpoint serves the same
+    closing-rate series and is more stable here.
     """
     import akshare as ak
 
@@ -454,14 +458,15 @@ def fetch_exchange_repo(symbol: str = "GC007") -> pd.DataFrame:
         raise ValueError(
             f"Unknown SSE repo symbol {symbol!r}. Known: {sorted(GC_SYMBOLS)}"
         )
-    raw = ak.bond_buy_back_hist_em(symbol=GC_SYMBOLS[symbol])
+    sh_symbol = f"sh{GC_SYMBOLS[symbol]}"
+    raw = ak.bond_zh_hs_daily(symbol=sh_symbol)
     if raw is None or raw.empty:
         return pd.DataFrame(columns=REPO_RATE_COLUMNS)
 
     df = raw.copy()
-    df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
+    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
     df["rate_name"] = symbol
-    df["value_pct"] = pd.to_numeric(df["收盘"], errors="coerce")
+    df["value_pct"] = pd.to_numeric(df["close"], errors="coerce")
     return df[REPO_RATE_COLUMNS].dropna().reset_index(drop=True)
 
 
