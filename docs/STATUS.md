@@ -4,6 +4,10 @@
 > frequency fix applied across pricing engine). Read this first when
 > resuming work in a new session — it captures everything needed to
 > pick up without re-reading the conversation history.
+>
+> 想 **operate**（让它自动跑、看 digest、排错）→ `docs/DAILY_OPERATIONS.md`
+> 想 **build**（写策略、加数据源、改面板）→ 本文 + `docs/BACKLOG.md`
+> 想了解项目 **vision** → `docs/design.md`
 
 ## Constraint
 
